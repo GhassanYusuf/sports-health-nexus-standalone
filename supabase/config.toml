@@ -1,0 +1,52 @@
+project_id = "zcwfreuywtlrrgevhtmo"
+
+[functions.ollama-chat]
+verify_jwt = false
+
+[functions.ollama-models]
+verify_jwt = false
+
+[functions.grant-admin-first]
+verify_jwt = false
+
+[functions.send-verification-email]
+verify_jwt = false
+
+[functions.bank-accounts]
+verify_jwt = true
+
+[functions.graduate-child]
+verify_jwt = true
+
+[functions.degraduate-member]
+verify_jwt = true
+
+[functions.database-backup]
+verify_jwt = true
+
+[functions.database-restore]
+verify_jwt = true
+
+[functions.reconcile-club-owners]
+verify_jwt = true
+
+[functions.create-club-owner]
+verify_jwt = true
+
+[functions.manage-package-price]
+verify_jwt = true
+
+[functions.create-transaction]
+verify_jwt = true
+
+[functions.generate-financial-report]
+verify_jwt = true
+
+[functions.send-subscription-email]
+verify_jwt = true
+
+[functions.process-subscription-workflow]
+verify_jwt = true
+
+[functions.check-expiring-subscriptions]
+verify_jwt = false
