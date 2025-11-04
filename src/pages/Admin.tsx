@@ -220,8 +220,9 @@ const Admin: React.FC = () => {
   }, [activeSection, selectedClubId]);
 
   const fetchClubs = async () => {
-    console.log("Fetching clubs for role:", userRole);
-    
+    console.log("🔄 fetchClubs() called for role:", userRole, "at", new Date().toISOString());
+    console.trace("fetchClubs call stack");
+
     let query = supabase.from("clubs").select("*");
     
     // Apply role-based filtering
@@ -232,7 +233,8 @@ const Admin: React.FC = () => {
     // super_admin sees all clubs (no filter)
     
     let { data, error } = await query.order("name");
-    
+
+    console.log("📋 DB returned clubs:", data?.map(c => c.name));
     console.log("Clubs fetch result:", { data, error, userRole });
     
     // Fallback: If no clubs found for business_owner/admin, check club_members for Owner rank
@@ -277,6 +279,8 @@ const Admin: React.FC = () => {
     }
     
     if (!error && data) {
+      console.log("🔢 Starting stats fetch for clubs:", data.map(c => c.name));
+
       // Calculate real-time statistics for each club
       const clubsWithStats = await Promise.all(
         data.map(async (club) => {
@@ -330,11 +334,22 @@ const Admin: React.FC = () => {
         })
       );
 
-      setClubs(clubsWithStats);
-      
+      console.log("✅ Promise.all completed. Clubs order:", clubsWithStats.map(c => c.name));
+
+      // Re-sort alphabetically after fetching stats to maintain consistent order
+      // Use slice() to create a new array to avoid mutation issues
+      const sortedClubs = [...clubsWithStats].sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+      console.log("Setting clubs in alphabetical order:", sortedClubs.map(c => c.name));
+      setClubs(sortedClubs);
+
       // Auto-select if business owner has only one club
-      if ((userRole === 'business_owner' || userRole === 'admin') && clubsWithStats.length === 1) {
-        handleSelectClub(clubsWithStats[0]);
+      if ((userRole === 'business_owner' || userRole === 'admin') && sortedClubs.length === 1) {
+        handleSelectClub(sortedClubs[0]);
       }
     }
   };

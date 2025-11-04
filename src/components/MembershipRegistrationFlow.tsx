@@ -714,22 +714,35 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
         let memberId: string;
 
         if (reg.type === 'self') {
-          // Create club member for self
-          const { data: member, error: memberError } = await supabase
+          // Check if club member already exists for this user
+          const { data: existingMember } = await supabase
             .from('club_members')
-            .insert({
-              club_id: clubId,
-              user_id: user.id,
-              name: reg.name,
-              rank: 'Beginner',
-              avatar_url: reg.avatarUrl,
-              payment_screenshot_url: payLater ? null : paymentScreenshotUrl
-            })
-            .select()
-            .single();
+            .select('id')
+            .eq('club_id', clubId)
+            .eq('user_id', user.id)
+            .maybeSingle();
 
-          if (memberError) throw memberError;
-          memberId = member.id;
+          if (existingMember) {
+            // Reuse existing member record
+            memberId = existingMember.id;
+          } else {
+            // Create new club member for self
+            const { data: member, error: memberError } = await supabase
+              .from('club_members')
+              .insert({
+                club_id: clubId,
+                user_id: user.id,
+                name: reg.name,
+                rank: 'Beginner',
+                avatar_url: reg.avatarUrl,
+                payment_screenshot_url: payLater ? null : paymentScreenshotUrl
+              })
+              .select()
+              .single();
+
+            if (memberError) throw memberError;
+            memberId = member.id;
+          }
         } else {
           // For existing user mode, find existing child by matching data
           let childId = null;
@@ -761,22 +774,35 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
             childId = child.id;
           }
 
-          // Create club member for child
-          const { data: member, error: memberError } = await supabase
+          // Check if club member already exists for this child
+          const { data: existingMember } = await supabase
             .from('club_members')
-            .insert({
-              club_id: clubId,
-              child_id: childId,
-              name: reg.name,
-              rank: 'Beginner',
-              avatar_url: reg.avatarUrl,
-              payment_screenshot_url: paymentScreenshotUrl
-            })
-            .select()
-            .single();
+            .select('id')
+            .eq('club_id', clubId)
+            .eq('child_id', childId)
+            .maybeSingle();
 
-          if (memberError) throw memberError;
-          memberId = member.id;
+          if (existingMember) {
+            // Reuse existing member record
+            memberId = existingMember.id;
+          } else {
+            // Create new club member for child
+            const { data: member, error: memberError } = await supabase
+              .from('club_members')
+              .insert({
+                club_id: clubId,
+                child_id: childId,
+                name: reg.name,
+                rank: 'Beginner',
+                avatar_url: reg.avatarUrl,
+                payment_screenshot_url: paymentScreenshotUrl
+              })
+              .select()
+              .single();
+
+            if (memberError) throw memberError;
+            memberId = member.id;
+          }
         }
 
         // Enroll in package and trigger subscription workflow

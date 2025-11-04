@@ -50,21 +50,22 @@ serve(async (req: Request) => {
       );
     }
 
-    // Check if user already has a role
-    const { data: existingRole } = await supabase
+    // Check if user already has the specific role being requested
+    const { data: existingRoles } = await supabase
       .from("user_roles")
       .select("role")
-      .eq("user_id", user.id)
-      .maybeSingle();
+      .eq("user_id", user.id);
 
-    if (existingRole) {
-      // User already has a role, just return success
-      console.log(`User ${user.id} already has role: ${existingRole.role}`);
+    const hasRequestedRole = existingRoles?.some(r => r.role === role);
+
+    if (hasRequestedRole) {
+      // User already has the specific role being requested
+      console.log(`User ${user.id} already has role: ${role}`);
       return new Response(
         JSON.stringify({
           success: true,
-          message: `User already has role: ${existingRole.role}`,
-          role: existingRole.role,
+          message: `User already has role: ${role}`,
+          role: role,
         }),
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -73,7 +74,7 @@ serve(async (req: Request) => {
       );
     }
 
-    // Grant the requested role
+    // Grant the requested role (allows multiple roles per user)
     const { error: roleError } = await supabase
       .from("user_roles")
       .insert({ user_id: user.id, role });
@@ -83,7 +84,7 @@ serve(async (req: Request) => {
       throw new Error(`Failed to grant role: ${roleError.message}`);
     }
 
-    console.log(`Granted ${role} role to user ${user.id}`);
+    console.log(`Granted ${role} role to user ${user.id} (existing roles: ${existingRoles?.map(r => r.role).join(', ') || 'none'})`);
 
     return new Response(
       JSON.stringify({

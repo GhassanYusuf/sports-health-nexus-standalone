@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Camera, Loader2 } from "lucide-react";
 import { AppHeader } from "@/components/AppHeader";
 import { FloatingBackButton } from "@/components/ui/floating-back-button";
+import { useImageUpload } from "@/hooks/useImageUpload";
+import { ImageCropper } from "@/components/ImageCropper";
 
 export default function Profile() {
   const navigate = useNavigate();
@@ -17,17 +19,73 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const {
+    imageToEdit,
+    isUploading,
+    aspectRatioType,
+    maxOutputSize,
+    handleFileSelect,
+    handleCropComplete,
+    handleCloseCropper,
+  } = useImageUpload({
+    aspectRatioType: "avatar",
+    maxOutputSize: 512,
+    bucket: "avatars",
+    onSuccess: async (url) => {
+      console.log('Avatar uploaded successfully, URL:', url);
+
+      // Update profile with new avatar URL
+      const { error } = await supabase
+        .from('profiles')
+        .update({ avatar_url: url })
+        .eq('user_id', profile.user_id);
+
+      if (error) {
+        console.error('Failed to update avatar in DB:', error);
+        toast({
+          title: "Error",
+          description: "Failed to update avatar",
+          variant: "destructive",
+        });
+      } else {
+        console.log('Avatar URL saved to database');
+        // Force re-fetch profile to ensure we have the latest data
+        await fetchProfile();
+        toast({
+          title: "Success",
+          description: "Profile photo updated successfully",
+        });
+      }
+    },
+  });
 
   useEffect(() => {
     fetchProfile();
   }, []);
 
-  const fetchProfile = async () => {
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    await handleFileSelect(file, user.id, 'avatar');
+  };
+
+  const fetchProfile = async () => {
+    console.log('🔄 Fetching profile...');
+    const { data: { user } } = await supabase.auth.getUser();
+
     if (!user) {
+      console.log('❌ No user found, redirecting to /auth');
       navigate("/auth");
       return;
     }
+
+    console.log('👤 User ID:', user.id);
 
     const { data } = await supabase
       .from('profiles')
@@ -36,40 +94,58 @@ export default function Profile() {
       .single();
 
     if (data) {
+      console.log('✅ Profile loaded:', data.name);
       setProfile(data);
+    } else {
+      console.log('⚠️ No profile data found');
     }
     setLoading(false);
   };
 
   const handleSave = async () => {
+    console.log('💾 Saving profile...');
     setSaving(true);
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        name: profile.name,
-        phone: profile.phone,
-        country_code: profile.country_code,
-        date_of_birth: profile.date_of_birth,
-        gender: profile.gender,
-        nationality: profile.nationality,
-        address: profile.address,
-        blood_type: profile.blood_type,
-      })
-      .eq('user_id', profile.user_id);
 
-    if (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update profile",
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "Success",
-        description: "Profile updated successfully",
-      });
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          name: profile.name,
+          phone: profile.phone,
+          country_code: profile.country_code,
+          date_of_birth: profile.date_of_birth,
+          gender: profile.gender,
+          nationality: profile.nationality,
+          address: profile.address,
+          blood_type: profile.blood_type,
+        })
+        .eq('user_id', profile.user_id);
+
+      if (error) {
+        console.error('❌ Profile save error:', error);
+        toast({
+          title: "Error",
+          description: "Failed to update profile",
+          variant: "destructive",
+        });
+      } else {
+        console.log('✅ Profile saved successfully');
+        toast({
+          title: "Success",
+          description: "Profile updated successfully",
+        });
+
+        // Redirect to home page after successful save
+        setTimeout(() => {
+          navigate('/');
+        }, 1000); // Wait 1 second to show the toast
+      }
+    } catch (err) {
+      console.error('❌ Unexpected error saving profile:', err);
+    } finally {
+      setSaving(false);
+      console.log('💾 Save complete');
     }
-    setSaving(false);
   };
 
   if (loading) {
@@ -95,14 +171,33 @@ export default function Profile() {
             {/* Avatar Section */}
             <div className="flex items-center gap-6">
               <Avatar className="h-24 w-24">
-                <AvatarImage src={profile?.avatar_url || undefined} />
+                <AvatarImage
+                  key={profile?.avatar_url}
+                  src={profile?.avatar_url ? `${profile.avatar_url}?t=${Date.now()}` : undefined}
+                />
                 <AvatarFallback className="bg-brand-red text-white text-2xl">
                   {profile?.name?.substring(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
-              <Button variant="outline" size="sm">
-                <Camera className="h-4 w-4 mr-2" />
-                Change Photo
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+              >
+                {isUploading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Camera className="h-4 w-4 mr-2" />
+                )}
+                {isUploading ? 'Uploading...' : 'Change Photo'}
               </Button>
             </div>
 
@@ -201,6 +296,17 @@ export default function Profile() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Image Cropper Modal */}
+      {imageToEdit && (
+        <ImageCropper
+          image={imageToEdit}
+          onCropComplete={handleCropComplete}
+          onClose={handleCloseCropper}
+          aspectRatioType={aspectRatioType}
+          maxOutputSize={maxOutputSize}
+        />
+      )}
     </div>
   );
 }
