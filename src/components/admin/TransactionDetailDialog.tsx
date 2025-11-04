@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { format } from "date-fns";
-import { FileText, CheckCircle, XCircle, RefreshCw } from "lucide-react";
+import { FileText, CheckCircle, XCircle, RefreshCw, Edit } from "lucide-react";
 import { useState } from "react";
 import { PaymentApprovalDialog } from "./PaymentApprovalDialog";
 import { RefundDialog } from "./RefundDialog";
+import { TransactionEntryDialog } from "./TransactionEntryDialog";
 import { formatCurrency } from "@/lib/currencyUtils";
 
 interface TransactionDetailDialogProps {
@@ -26,8 +27,12 @@ export function TransactionDetailDialog({
 }: TransactionDetailDialogProps) {
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [showRefundDialog, setShowRefundDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
 
   if (!transaction) return null;
+
+  // Allow editing for all transaction types
+  const canEdit = ['expense', 'refund', 'product_sale', 'facility_rental', 'enrollment_fee', 'package_fee'].includes(transaction.transaction_type);
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: "default" | "secondary" | "destructive" | "outline", className: string }> = {
@@ -216,6 +221,16 @@ export function TransactionDetailDialog({
             {/* Actions */}
             <Separator />
             <div className="flex gap-2 justify-end">
+              {canEdit && (
+                <Button
+                  onClick={() => setShowEditDialog(true)}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  <Edit className="h-4 w-4" />
+                  Edit Transaction
+                </Button>
+              )}
               {transaction.payment_status === 'pending' && (
                 <>
                   <Button
@@ -241,6 +256,18 @@ export function TransactionDetailDialog({
           </div>
         </DialogContent>
       </Dialog>
+
+      <TransactionEntryDialog
+        clubId={transaction.club_id}
+        currency={currency}
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        transaction={transaction}
+        onSuccess={() => {
+          onTransactionUpdated();
+          setShowEditDialog(false);
+        }}
+      />
 
       <PaymentApprovalDialog
         transaction={transaction}

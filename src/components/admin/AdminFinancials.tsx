@@ -4,8 +4,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Download, Plus, TrendingUp, TrendingDown, DollarSign } from "lucide-react";
+import { Download, Plus, TrendingUp, TrendingDown, DollarSign, Edit, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { TransactionEntryDialog } from "./TransactionEntryDialog";
 import { ManualIncomeDialog } from "./ManualIncomeDialog";
 import { TransactionDetailDialog } from "./TransactionDetailDialog";
@@ -27,12 +37,17 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
   const [showTransactionDetail, setShowTransactionDetail] = useState(false);
   const [showMonthTransactions, setShowMonthTransactions] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<{ month: string; year: number } | null>(null);
+  const [editTransaction, setEditTransaction] = useState<any>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [deleteTransaction, setDeleteTransaction] = useState<any>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [dateRange, setDateRange] = useState({
     start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0]
   });
 
-  // Fetch transactions
+  // Fetch transactions (exclude soft-deleted)
   const { data: transactions, isLoading } = useQuery({
     queryKey: ['transactions', clubId, dateRange.start, dateRange.end],
     queryFn: async () => {
@@ -42,6 +57,7 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
         .eq('club_id', clubId)
         .gte('transaction_date', dateRange.start)
         .lte('transaction_date', dateRange.end)
+        .is('deleted_at', null)  // Filter out soft-deleted transactions
         .order('transaction_date', { ascending: false });
 
       if (error) throw error;
@@ -109,6 +125,41 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
         };
       });
   }, [transactions]);
+
+  // Handle soft delete
+  const handleDelete = async () => {
+    if (!deleteTransaction) return;
+
+    setIsDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error('No active session');
+      }
+
+      const { error } = await supabase.functions.invoke('soft-delete-transaction', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: {
+          transaction_id: deleteTransaction.id,
+        },
+      });
+
+      if (error) throw error;
+
+      toast.success(`Transaction ${deleteTransaction.receipt_number} deleted successfully`);
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      setShowDeleteDialog(false);
+      setDeleteTransaction(null);
+    } catch (error: any) {
+      console.error('Error deleting transaction:', error);
+      toast.error(error.message || 'Failed to delete transaction');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Export to CSV
   const handleExport = () => {
@@ -286,37 +337,74 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
                         <th className="p-2 text-right">Amount</th>
                         <th className="p-2 text-right">VAT</th>
                         <th className="p-2 text-right">Total</th>
+                        <th className="p-2 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {transactions.map((t) => (
-                        <tr 
-                          key={t.id} 
-                          className="border-b hover:bg-muted/50 cursor-pointer transition-colors"
-                          onClick={() => {
-                            setSelectedTransaction(t);
-                            setShowTransactionDetail(true);
-                          }}
-                        >
-                          <td className="p-2">{format(new Date(t.transaction_date), 'MMM dd, yyyy')}</td>
-                          <td className="p-2 font-mono text-sm">{t.receipt_number}</td>
-                          <td className="p-2">
-                            <span className={`px-2 py-1 rounded-full text-xs ${
-                              ['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(t.transaction_type)
-                                ? 'bg-green-100 text-green-700'
-                                : t.transaction_type === 'expense'
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-orange-100 text-orange-700'
-                            }`}>
-                              {t.transaction_type.replace('_', ' ')}
-                            </span>
-                          </td>
-                          <td className="p-2">{t.description}</td>
-                          <td className="p-2 text-right">{formatCurrency(parseFloat(String(t.amount)), { currency })}</td>
-                          <td className="p-2 text-right">{formatCurrency(parseFloat(String(t.vat_amount)), { currency })}</td>
-                          <td className="p-2 text-right font-bold">{formatCurrency(parseFloat(String(t.total_amount)), { currency })}</td>
-                        </tr>
-                      ))}
+                      {transactions.map((t) => {
+                        // Allow editing for all transaction types
+                        const canEdit = ['expense', 'refund', 'product_sale', 'facility_rental', 'enrollment_fee', 'package_fee'].includes(t.transaction_type);
+                        return (
+                          <tr
+                            key={t.id}
+                            className="border-b hover:bg-muted/50 transition-colors cursor-pointer"
+                            onClick={() => {
+                              setSelectedTransaction(t);
+                              setShowTransactionDetail(true);
+                            }}
+                          >
+                            <td className="p-2">{format(new Date(t.transaction_date), 'MMM dd, yyyy')}</td>
+                            <td className="p-2 font-mono text-sm">{t.receipt_number}</td>
+                            <td className="p-2">
+                              <span className={`px-2 py-1 rounded-full text-xs ${
+                                ['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(t.transaction_type)
+                                  ? 'bg-green-100 text-green-700'
+                                  : t.transaction_type === 'expense'
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-orange-100 text-orange-700'
+                              }`}>
+                                {t.transaction_type.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="p-2">{t.description}</td>
+                            <td className="p-2 text-right">{formatCurrency(parseFloat(String(t.amount)), { currency })}</td>
+                            <td className="p-2 text-right">{formatCurrency(parseFloat(String(t.vat_amount)), { currency })}</td>
+                            <td className="p-2 text-right font-bold">{formatCurrency(parseFloat(String(t.total_amount)), { currency })}</td>
+                            <td className="p-2">
+                              <div className="flex gap-1 justify-center">
+                                {canEdit && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditTransaction(t);
+                                      setShowEditDialog(true);
+                                    }}
+                                    className="h-8 w-8 p-0"
+                                    title="Edit transaction"
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteTransaction(t);
+                                    setShowDeleteDialog(true);
+                                  }}
+                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                  title="Delete transaction"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -432,6 +520,19 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
         onOpenChange={setShowTransactionDialog}
       />
 
+      <TransactionEntryDialog
+        clubId={clubId}
+        currency={currency}
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        transaction={editTransaction}
+        onSuccess={() => {
+          setShowEditDialog(false);
+          setEditTransaction(null);
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        }}
+      />
+
       <ManualIncomeDialog
         clubId={clubId}
         currency={currency}
@@ -465,6 +566,33 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
           currency={currency}
         />
       )}
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Transaction</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete transaction <strong>{deleteTransaction?.receipt_number}</strong>?
+              <br />
+              <br />
+              This will soft delete the transaction. It won't be visible in the ledger but can be restored if needed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDelete();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
