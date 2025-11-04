@@ -4,26 +4,29 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { ImageCropper } from "@/components/ImageCropper";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import { RefreshCw, Upload } from "lucide-react";
+import { formatCurrency } from "@/lib/currencyUtils";
 
 interface RefundDialogProps {
   transaction: any;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  currency?: string;
 }
 
 export function RefundDialog({
   transaction,
   open,
   onOpenChange,
-  onSuccess
+  onSuccess,
+  currency = 'USD'
 }: RefundDialogProps) {
   const [refundType, setRefundType] = useState<'full' | 'partial'>('full');
   const [refundAmount, setRefundAmount] = useState('');
@@ -32,7 +35,7 @@ export function RefundDialog({
   const [isProcessing, setIsProcessing] = useState(false);
   const queryClient = useQueryClient();
 
-  const fileInputRef = useState<HTMLInputElement | null>(null)[0];
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const {
     imageToEdit,
     isUploading,
@@ -75,7 +78,21 @@ export function RefundDialog({
 
     setIsProcessing(true);
     try {
+      console.log('🟢 Starting refund process for transaction:', transaction.id);
+
+      // Get current session for auth token
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error('No active session');
+      }
+
+      console.log('🔑 Got session, calling create-refund function');
+
       const { data, error } = await supabase.functions.invoke('create-refund', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        },
         body: {
           original_transaction_id: transaction.id,
           refund_amount: calculatedRefund,
@@ -85,16 +102,24 @@ export function RefundDialog({
         }
       });
 
-      if (error) throw error;
+      console.log('📝 Refund response:', { data, error });
+
+      if (error) {
+        console.error('❌ Refund error:', error);
+        throw new Error(error.message || 'Failed to process refund');
+      }
 
       toast.success(`${refundType === 'full' ? 'Full' : 'Partial'} refund processed successfully`);
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+      console.log('✅ Calling onSuccess callback');
       onSuccess();
     } catch (error: any) {
-      console.error('Error processing refund:', error);
+      console.error('💥 Error processing refund:', error);
       toast.error(error.message || 'Failed to process refund');
     } finally {
       setIsProcessing(false);
+      console.log('🏁 Refund process completed');
     }
   };
 
@@ -118,7 +143,7 @@ export function RefundDialog({
               </div>
               <div>
                 <p className="text-muted-foreground">Original Amount</p>
-                <p className="font-medium">${originalAmount.toFixed(2)}</p>
+                <p className="font-medium">{formatCurrency(originalAmount, { currency })}</p>
               </div>
               <div className="col-span-2">
                 <p className="text-muted-foreground">Description</p>
@@ -134,7 +159,7 @@ export function RefundDialog({
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="full" id="full" />
                 <Label htmlFor="full" className="font-normal cursor-pointer">
-                  Full Refund (${originalAmount.toFixed(2)})
+                  Full Refund ({formatCurrency(originalAmount, { currency })})
                 </Label>
               </div>
               <div className="flex items-center space-x-2">
@@ -160,7 +185,7 @@ export function RefundDialog({
                 max={originalAmount}
                 value={refundAmount}
                 onChange={(e) => setRefundAmount(e.target.value)}
-                placeholder={`Max: ${originalAmount.toFixed(2)}`}
+                placeholder={`Max: ${formatCurrency(originalAmount, { currency })}`}
               />
             </div>
           )}
@@ -169,10 +194,10 @@ export function RefundDialog({
           <div className="bg-orange-50 dark:bg-orange-950/20 p-4 rounded-lg border border-orange-200 dark:border-orange-800">
             <h4 className="font-semibold mb-2 text-orange-900 dark:text-orange-100">Refund Impact</h4>
             <div className="text-sm space-y-1 text-orange-800 dark:text-orange-200">
-              <p>• Original Income: +${originalAmount.toFixed(2)}</p>
-              <p>• Refund Amount: -${calculatedRefund.toFixed(2)}</p>
+              <p>• Original Income: +{formatCurrency(originalAmount, { currency })}</p>
+              <p>• Refund Amount: -{formatCurrency(calculatedRefund, { currency })}</p>
               <p className="font-semibold pt-1 border-t border-orange-200 dark:border-orange-800">
-                Net Income Impact: ${(originalAmount - calculatedRefund).toFixed(2)}
+                Net Income Impact: {formatCurrency(originalAmount - calculatedRefund, { currency })}
               </p>
             </div>
           </div>
@@ -205,7 +230,7 @@ export function RefundDialog({
               accept="image/*"
               onChange={handleFileChange}
               disabled={isUploading}
-              ref={(el) => (fileInputRef as any) = el}
+              ref={fileInputRef}
             />
             <p className="text-xs text-muted-foreground mt-1">
               Upload proof of refund transaction if available

@@ -12,15 +12,29 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(
+    const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    // Get auth header
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: "Authorization required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Get authenticated user
+    const token = authHeader.replace("Bearer ", "");
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+
     if (userError || !user) {
-      throw new Error('Unauthorized');
+      return new Response(
+        JSON.stringify({ error: "Invalid token" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const { 
@@ -36,7 +50,7 @@ serve(async (req) => {
     }
 
     // Get the original transaction
-    const { data: originalTransaction, error: fetchError } = await supabase
+    const { data: originalTransaction, error: fetchError } = await supabaseAdmin
       .from('transaction_ledger')
       .select('*')
       .eq('id', original_transaction_id)
@@ -54,7 +68,7 @@ serve(async (req) => {
     }
 
     // Generate receipt number for refund
-    const { data: receiptNumber, error: receiptError } = await supabase
+    const { data: receiptNumber, error: receiptError } = await supabaseAdmin
       .rpc('generate_receipt_number', { p_club_id: originalTransaction.club_id });
 
     if (receiptError) {
@@ -62,16 +76,16 @@ serve(async (req) => {
     }
 
     // Create refund transaction
-    const { data: refundTransaction, error: insertError } = await supabase
+    const { data: refundTransaction, error: insertError } = await supabaseAdmin
       .from('transaction_ledger')
       .insert({
         club_id: originalTransaction.club_id,
         transaction_type: 'refund',
-        category: 'refund',
+        category: null,
         description: `Refund for: ${originalTransaction.description}`,
-        amount: -refundAmountValue,
-        vat_amount: -(parseFloat(originalTransaction.vat_amount || 0) * (refundAmountValue / originalAmount)),
-        total_amount: -refundAmountValue,
+        amount: refundAmountValue,
+        vat_amount: parseFloat(originalTransaction.vat_amount || 0) * (refundAmountValue / originalAmount),
+        total_amount: refundAmountValue,
         vat_percentage_applied: originalTransaction.vat_percentage_applied,
         transaction_date: new Date().toISOString().split('T')[0],
         payment_method: 'refund',
@@ -84,7 +98,9 @@ serve(async (req) => {
         refund_proof_url,
         member_name: originalTransaction.member_name,
         member_email: originalTransaction.member_email,
-        member_phone: originalTransaction.member_phone
+        member_phone: originalTransaction.member_phone,
+        created_by: user.id,
+        updated_by: user.id
       })
       .select()
       .single();
@@ -94,7 +110,7 @@ serve(async (req) => {
     }
 
     // Log to transaction history
-    await supabase
+    await supabaseAdmin
       .from('transaction_history')
       .insert({
         transaction_id: refundTransaction.id,

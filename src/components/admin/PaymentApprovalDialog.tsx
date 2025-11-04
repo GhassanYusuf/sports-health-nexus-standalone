@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -10,19 +10,22 @@ import { ImageCropper } from "@/components/ImageCropper";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import { CheckCircle, XCircle, Upload } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { formatCurrency } from "@/lib/currencyUtils";
 
 interface PaymentApprovalDialogProps {
   transaction: any;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  currency?: string;
 }
 
 export function PaymentApprovalDialog({
   transaction,
   open,
   onOpenChange,
-  onSuccess
+  onSuccess,
+  currency = 'USD'
 }: PaymentApprovalDialogProps) {
   const [paymentProofUrl, setPaymentProofUrl] = useState(transaction?.payment_proof_url || '');
   const [rejectionReason, setRejectionReason] = useState('');
@@ -31,7 +34,7 @@ export function PaymentApprovalDialog({
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const queryClient = useQueryClient();
 
-  const fileInputRef = useState<HTMLInputElement | null>(null)[0];
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const {
     imageToEdit,
     isUploading,
@@ -57,7 +60,21 @@ export function PaymentApprovalDialog({
     setIsProcessing(true);
     setAction('approve');
     try {
+      console.log('🟢 Starting payment approval for transaction:', transaction.id);
+
+      // Get current session for auth token
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error('No active session');
+      }
+
+      console.log('🔑 Got session, calling approve-payment function');
+
       const { data, error } = await supabase.functions.invoke('approve-payment', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        },
         body: {
           transaction_id: transaction.id,
           payment_proof_url: paymentProofUrl,
@@ -65,17 +82,25 @@ export function PaymentApprovalDialog({
         }
       });
 
-      if (error) throw error;
+      console.log('📝 Approval response:', { data, error });
+
+      if (error) {
+        console.error('❌ Approval error:', error);
+        throw new Error(error.message || 'Failed to approve payment');
+      }
 
       toast.success('Payment approved successfully');
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+      console.log('✅ Calling onSuccess callback');
       onSuccess();
     } catch (error: any) {
-      console.error('Error approving payment:', error);
+      console.error('💥 Error approving payment:', error);
       toast.error(error.message || 'Failed to approve payment');
     } finally {
       setIsProcessing(false);
       setAction(null);
+      console.log('🏁 Payment approval process completed');
     }
   };
 
@@ -88,14 +113,24 @@ export function PaymentApprovalDialog({
     setIsProcessing(true);
     setAction('reject');
     try {
+      // Get current session for auth token
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error('No active session');
+      }
+
       const { data, error } = await supabase.functions.invoke('reject-payment', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        },
         body: {
           transaction_id: transaction.id,
           rejection_reason: rejectionReason
         }
       });
 
-      if (error) throw error;
+      if (error) throw new Error(error.message || 'Failed to reject payment');
 
       toast.success('Payment rejected');
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -129,7 +164,7 @@ export function PaymentApprovalDialog({
               </div>
               <div>
                 <p className="text-muted-foreground">Amount</p>
-                <p className="font-medium">${parseFloat(transaction.total_amount).toFixed(2)}</p>
+                <p className="font-medium">{formatCurrency(parseFloat(transaction.total_amount), { currency })}</p>
               </div>
               <div className="col-span-2">
                 <p className="text-muted-foreground">Description</p>
@@ -157,7 +192,7 @@ export function PaymentApprovalDialog({
               accept="image/*"
               onChange={handleFileChange}
               disabled={isUploading}
-              ref={(el) => (fileInputRef as any) = el}
+              ref={fileInputRef}
             />
             <p className="text-xs text-muted-foreground mt-1">
               {paymentProofUrl ? 'Update payment proof if needed' : 'Upload payment proof to approve'}

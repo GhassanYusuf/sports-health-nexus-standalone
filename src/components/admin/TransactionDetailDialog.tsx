@@ -273,9 +273,19 @@ export function TransactionDetailDialog({
         transaction={transaction}
         open={showApprovalDialog}
         onOpenChange={setShowApprovalDialog}
+        currency={currency}
         onSuccess={() => {
-          onTransactionUpdated();
-          onOpenChange(false);
+          console.log('🎉 Payment approved, updating and closing dialogs');
+          try {
+            onTransactionUpdated();
+            setShowApprovalDialog(false);
+            // Keep detail dialog open briefly to show the updated status
+            setTimeout(() => {
+              onOpenChange(false);
+            }, 500);
+          } catch (error) {
+            console.error('Error in onSuccess callback:', error);
+          }
         }}
       />
 
@@ -283,6 +293,7 @@ export function TransactionDetailDialog({
         transaction={transaction}
         open={showRefundDialog}
         onOpenChange={setShowRefundDialog}
+        currency={currency}
         onSuccess={() => {
           onTransactionUpdated();
           onOpenChange(false);

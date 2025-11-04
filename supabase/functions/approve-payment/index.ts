@@ -12,15 +12,29 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(
+    const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    // Get auth header
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: "Authorization required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Get authenticated user
+    const token = authHeader.replace("Bearer ", "");
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+
     if (userError || !user) {
-      throw new Error('Unauthorized');
+      return new Response(
+        JSON.stringify({ error: "Invalid token" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const { transaction_id, payment_proof_url, notes } = await req.json();
@@ -30,7 +44,7 @@ serve(async (req) => {
     }
 
     // Get the transaction
-    const { data: transaction, error: fetchError } = await supabase
+    const { data: transaction, error: fetchError } = await supabaseAdmin
       .from('transaction_ledger')
       .select('*')
       .eq('id', transaction_id)
@@ -51,7 +65,7 @@ serve(async (req) => {
     };
 
     // Update transaction to paid
-    const { data: updatedTransaction, error: updateError } = await supabase
+    const { data: updatedTransaction, error: updateError } = await supabaseAdmin
       .from('transaction_ledger')
       .update({
         payment_status: 'paid',
@@ -69,7 +83,7 @@ serve(async (req) => {
     }
 
     // Log to transaction history
-    await supabase
+    await supabaseAdmin
       .from('transaction_history')
       .insert({
         transaction_id,
@@ -88,7 +102,7 @@ serve(async (req) => {
     // Send receipt email if member email exists
     if (updatedTransaction.member_email) {
       try {
-        await supabase.functions.invoke('send-registration-receipt', {
+        await supabaseAdmin.functions.invoke('send-registration-receipt', {
           body: {
             clubId: updatedTransaction.club_id,
             parentEmail: updatedTransaction.member_email,
