@@ -80,29 +80,44 @@ const Admin: React.FC = () => {
   // Process transactions into monthly data - matches AdminFinancials logic
   const monthlyData = React.useMemo(() => {
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthlyTotals: Record<string, { income: number; expenses: number }> = {};
+    const monthlyTotals: Record<string, { income: number; expenses: number; refunds: number; cash: number; cashToCollect: number }> = {};
 
     // Initialize last 12 months with zero values
     const today = new Date();
     for (let i = 11; i >= 0; i--) {
       const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
       const key = `${date.getFullYear()}-${date.getMonth()}`;
-      monthlyTotals[key] = { income: 0, expenses: 0 };
+      monthlyTotals[key] = { income: 0, expenses: 0, refunds: 0, cash: 0, cashToCollect: 0 };
     }
 
     // Aggregate transaction data by month
     transactions.forEach((entry: any) => {
       const date = new Date(entry.transaction_date);
       const key = `${date.getFullYear()}-${date.getMonth()}`;
-      
+
       if (monthlyTotals[key]) {
         const amount = parseFloat(String(entry.total_amount || 0));
         if (['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental', 'manual_income'].includes(entry.transaction_type)) {
           monthlyTotals[key].income += amount;
+
+          // Track cash based on payment status
+          if (entry.payment_status === 'paid') {
+            monthlyTotals[key].cash += amount;
+          } else if (entry.payment_status === 'pending') {
+            monthlyTotals[key].cashToCollect += amount;
+          }
         } else if (entry.transaction_type === 'expense') {
           monthlyTotals[key].expenses += amount;
+          // If expense is paid, subtract from cash
+          if (entry.payment_status === 'paid') {
+            monthlyTotals[key].cash -= amount;
+          }
         } else if (entry.transaction_type === 'refund') {
-          monthlyTotals[key].expenses += amount; // Treat refunds as expenses
+          monthlyTotals[key].refunds += amount; // Track refunds separately
+          // If refund is paid, subtract from cash
+          if (entry.payment_status === 'paid') {
+            monthlyTotals[key].cash -= amount;
+          }
         }
       }
     });
@@ -116,7 +131,10 @@ const Admin: React.FC = () => {
           month: monthNames[monthIndex],
           income: monthlyTotals[key].income,
           expense: monthlyTotals[key].expenses,
-          profit: monthlyTotals[key].income - monthlyTotals[key].expenses
+          refunds: monthlyTotals[key].refunds,
+          cash: monthlyTotals[key].cash,
+          cashToCollect: monthlyTotals[key].cashToCollect,
+          profit: monthlyTotals[key].income - monthlyTotals[key].expenses - monthlyTotals[key].refunds
         };
       });
   }, [transactions]);
@@ -1183,19 +1201,46 @@ const Admin: React.FC = () => {
                               activeDot={{ r: 6 }}
                               name="Income"
                             />
-                            <Line 
-                              type="monotone" 
-                              dataKey="expense" 
-                              stroke="#ef4444" 
+                            <Line
+                              type="monotone"
+                              dataKey="expense"
+                              stroke="#ef4444"
                               strokeWidth={3}
                               dot={{ fill: '#ef4444', r: 4 }}
                               activeDot={{ r: 6 }}
                               name="Expense"
                             />
-                            <Line 
-                              type="monotone" 
-                              dataKey="profit" 
-                              stroke="#3b82f6" 
+                            <Line
+                              type="monotone"
+                              dataKey="refunds"
+                              stroke="#f97316"
+                              strokeWidth={3}
+                              dot={{ fill: '#f97316', r: 4 }}
+                              activeDot={{ r: 6 }}
+                              name="Refunds"
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="cash"
+                              stroke="#10b981"
+                              strokeWidth={3}
+                              dot={{ fill: '#10b981', r: 4 }}
+                              activeDot={{ r: 6 }}
+                              name="Cash"
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="cashToCollect"
+                              stroke="#f59e0b"
+                              strokeWidth={3}
+                              dot={{ fill: '#f59e0b', r: 4 }}
+                              activeDot={{ r: 6 }}
+                              name="Cash to Collect"
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="profit"
+                              stroke="#3b82f6"
                               strokeWidth={3}
                               dot={{ fill: '#3b82f6', r: 4 }}
                               activeDot={{ r: 6 }}

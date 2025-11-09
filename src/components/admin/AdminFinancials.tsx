@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Download, Plus, TrendingUp, TrendingDown, DollarSign, Edit, Trash2 } from "lucide-react";
+import { Download, Plus, TrendingUp, TrendingDown, Edit, Trash2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -20,6 +20,7 @@ import { TransactionEntryDialog } from "./TransactionEntryDialog";
 import { ManualIncomeDialog } from "./ManualIncomeDialog";
 import { TransactionDetailDialog } from "./TransactionDetailDialog";
 import { TransactionsByMonthDialog } from "./TransactionsByMonthDialog";
+import { AutoExpenseDialog } from "./AutoExpenseDialog";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
@@ -33,6 +34,7 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
   const queryClient = useQueryClient();
   const [showTransactionDialog, setShowTransactionDialog] = useState(false);
   const [showManualIncomeDialog, setShowManualIncomeDialog] = useState(false);
+  const [showAutoExpenseDialog, setShowAutoExpenseDialog] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
   const [showTransactionDetail, setShowTransactionDetail] = useState(false);
   const [showMonthTransactions, setShowMonthTransactions] = useState(false);
@@ -70,13 +72,28 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
     const amount = parseFloat(String(t.total_amount || 0));
     if (['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(t.transaction_type)) {
       acc.income += amount;
+
+      // Track cash based on payment status
+      if (t.payment_status === 'paid') {
+        acc.cash += amount; // Paid transactions go to cash
+      } else if (t.payment_status === 'pending') {
+        acc.cashToCollect += amount; // Pending transactions go to cash to be collected
+      }
     } else if (t.transaction_type === 'expense') {
       acc.expenses += amount;
+      // If expense is paid, subtract from cash
+      if (t.payment_status === 'paid') {
+        acc.cash -= amount;
+      }
     } else if (t.transaction_type === 'refund') {
       acc.refunds += amount;
+      // If refund is paid, subtract from cash
+      if (t.payment_status === 'paid') {
+        acc.cash -= amount;
+      }
     }
     return acc;
-  }, { income: 0, expenses: 0, refunds: 0 }) || { income: 0, expenses: 0, refunds: 0 };
+  }, { income: 0, expenses: 0, refunds: 0, cash: 0, cashToCollect: 0 }) || { income: 0, expenses: 0, refunds: 0, cash: 0, cashToCollect: 0 };
 
   const netIncome = summary.income - summary.expenses - summary.refunds;
 
@@ -85,14 +102,14 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
     if (!transactions) return [];
 
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthlyTotals: Record<string, { income: number; expenses: number }> = {};
+    const monthlyTotals: Record<string, { income: number; expenses: number; refunds: number; cash: number; cashToCollect: number }> = {};
 
     // Initialize last 12 months
     const today = new Date();
     for (let i = 11; i >= 0; i--) {
       const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
       const key = `${date.getFullYear()}-${date.getMonth()}`;
-      monthlyTotals[key] = { income: 0, expenses: 0 };
+      monthlyTotals[key] = { income: 0, expenses: 0, refunds: 0, cash: 0, cashToCollect: 0 };
     }
 
     // Aggregate transaction data by month
@@ -104,10 +121,25 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
         const amount = parseFloat(String(entry.total_amount || 0));
         if (['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(entry.transaction_type)) {
           monthlyTotals[key].income += amount;
+
+          // Track cash based on payment status
+          if (entry.payment_status === 'paid') {
+            monthlyTotals[key].cash += amount;
+          } else if (entry.payment_status === 'pending') {
+            monthlyTotals[key].cashToCollect += amount;
+          }
         } else if (entry.transaction_type === 'expense') {
           monthlyTotals[key].expenses += amount;
+          // If expense is paid, subtract from cash
+          if (entry.payment_status === 'paid') {
+            monthlyTotals[key].cash -= amount;
+          }
         } else if (entry.transaction_type === 'refund') {
-          monthlyTotals[key].expenses += amount; // Treat refunds as expenses
+          monthlyTotals[key].refunds += amount; // Track refunds separately
+          // If refund is paid, subtract from cash
+          if (entry.payment_status === 'paid') {
+            monthlyTotals[key].cash -= amount;
+          }
         }
       }
     });
@@ -121,7 +153,10 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
           month: monthNames[monthIndex],
           income: monthlyTotals[key].income,
           expenses: monthlyTotals[key].expenses,
-          profit: monthlyTotals[key].income - monthlyTotals[key].expenses
+          refunds: monthlyTotals[key].refunds,
+          cash: monthlyTotals[key].cash,
+          cashToCollect: monthlyTotals[key].cashToCollect,
+          profit: monthlyTotals[key].income - monthlyTotals[key].expenses - monthlyTotals[key].refunds
         };
       });
   }, [transactions]);
@@ -207,7 +242,7 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
           <h2 className="text-3xl font-bold">Financial Management</h2>
           <p className="text-muted-foreground">Track income, expenses, and generate reports</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={handleExport}>
             <Download className="w-4 h-4 mr-2" />
             Export CSV
@@ -215,6 +250,10 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
           <Button variant="outline" onClick={() => setShowManualIncomeDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Manual Income
+          </Button>
+          <Button variant="outline" onClick={() => setShowAutoExpenseDialog(true)}>
+            <Calendar className="w-4 h-4 mr-2" />
+            Auto Expense
           </Button>
           <Button onClick={() => setShowTransactionDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />
@@ -224,14 +263,14 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Income</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5" />
+            <div className="text-lg font-bold text-green-600 flex items-center gap-2 break-words">
+              <TrendingUp className="w-4 h-4 flex-shrink-0" />
               {formatCurrency(summary.income, { currency })}
             </div>
           </CardContent>
@@ -242,8 +281,8 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Expenses</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600 flex items-center gap-2">
-              <TrendingDown className="w-5 h-5" />
+            <div className="text-lg font-bold text-red-600 flex items-center gap-2 break-words">
+              <TrendingDown className="w-4 h-4 flex-shrink-0" />
               {formatCurrency(summary.expenses, { currency })}
             </div>
           </CardContent>
@@ -254,7 +293,7 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
             <CardTitle className="text-sm font-medium text-muted-foreground">Refunds</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-600">
+            <div className="text-lg font-bold text-orange-600 break-words">
               {formatCurrency(summary.refunds, { currency })}
             </div>
           </CardContent>
@@ -265,10 +304,33 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
             <CardTitle className="text-sm font-medium text-muted-foreground">Net Income</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold flex items-center gap-2 ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              <DollarSign className="w-5 h-5" />
+            <div className={`text-lg font-bold break-words ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {formatCurrency(netIncome, { currency })}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Cash</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-lg font-bold text-emerald-600 break-words">
+              {formatCurrency(summary.cash, { currency })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Paid transactions</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Cash to Collect</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-lg font-bold text-amber-600 break-words">
+              {formatCurrency(summary.cashToCollect, { currency })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Pending payments</p>
           </CardContent>
         </Card>
       </div>
@@ -303,6 +365,9 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
                 <Legend />
                 <Line type="monotone" dataKey="income" stroke="#22c55e" strokeWidth={2} name="Income" />
                 <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} name="Expenses" />
+                <Line type="monotone" dataKey="refunds" stroke="#f97316" strokeWidth={2} name="Refunds" />
+                <Line type="monotone" dataKey="cash" stroke="#10b981" strokeWidth={2} name="Cash" />
+                <Line type="monotone" dataKey="cashToCollect" stroke="#f59e0b" strokeWidth={2} name="Cash to Collect" />
                 <Line type="monotone" dataKey="profit" stroke="#3b82f6" strokeWidth={2} name="Profit" />
               </LineChart>
             </ResponsiveContainer>
@@ -542,6 +607,13 @@ export function AdminFinancials({ clubId, currency = 'USD' }: AdminFinancialsPro
           setShowManualIncomeDialog(false);
           // Refetch will happen automatically via react-query
         }}
+      />
+
+      <AutoExpenseDialog
+        clubId={clubId}
+        currency={currency}
+        open={showAutoExpenseDialog}
+        onOpenChange={setShowAutoExpenseDialog}
       />
 
       {selectedTransaction && (

@@ -50,3 +50,6 @@ verify_jwt = true
 
 [functions.check-expiring-subscriptions]
 verify_jwt = false
+
+[functions.process-recurring-expense]
+verify_jwt = true
