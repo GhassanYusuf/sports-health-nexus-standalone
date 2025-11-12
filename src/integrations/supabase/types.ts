@@ -1,3 +1,4 @@
+Connecting to db 5432
 export type Json =
   | string
   | number
@@ -7,64 +8,72 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "13.0.5"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
       activities: {
         Row: {
-          booking_enabled: boolean | null
           club_facility_id: string
           club_id: string
-          cost_per_session: number | null
           created_at: string | null
           description: string | null
           duration_minutes: number | null
           id: string
           max_capacity: number | null
-          monthly_fee: number
           notes: string | null
           picture_url: string | null
-          requires_prebooking: boolean | null
           sessions_per_week: number
           title: string
           updated_at: string | null
         }
         Insert: {
-          booking_enabled?: boolean | null
           club_facility_id: string
           club_id: string
-          cost_per_session?: number | null
           created_at?: string | null
           description?: string | null
           duration_minutes?: number | null
           id?: string
           max_capacity?: number | null
-          monthly_fee: number
           notes?: string | null
           picture_url?: string | null
-          requires_prebooking?: boolean | null
           sessions_per_week?: number
           title: string
           updated_at?: string | null
         }
         Update: {
-          booking_enabled?: boolean | null
           club_facility_id?: string
           club_id?: string
-          cost_per_session?: number | null
           created_at?: string | null
           description?: string | null
           duration_minutes?: number | null
           id?: string
           max_capacity?: number | null
-          monthly_fee?: number
           notes?: string | null
           picture_url?: string | null
-          requires_prebooking?: boolean | null
           sessions_per_week?: number
           title?: string
           updated_at?: string | null
@@ -623,6 +632,7 @@ export type Database = {
           picture_url: string | null
           popularity: number | null
           price: number
+          requires_prebooking: boolean | null
           session_count: number | null
           start_date: string | null
           updated_at: string | null
@@ -648,6 +658,7 @@ export type Database = {
           picture_url?: string | null
           popularity?: number | null
           price: number
+          requires_prebooking?: boolean | null
           session_count?: number | null
           start_date?: string | null
           updated_at?: string | null
@@ -673,6 +684,7 @@ export type Database = {
           picture_url?: string | null
           popularity?: number | null
           price?: number
+          requires_prebooking?: boolean | null
           session_count?: number | null
           start_date?: string | null
           updated_at?: string | null
@@ -1756,6 +1768,56 @@ export type Database = {
         }
         Relationships: []
       }
+      recurring_expenses: {
+        Row: {
+          amount: number
+          category: string
+          club_id: string
+          created_at: string | null
+          day_of_month: number
+          description: string | null
+          id: string
+          is_active: boolean
+          last_processed_at: string | null
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          amount: number
+          category?: string
+          club_id: string
+          created_at?: string | null
+          day_of_month?: number
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          last_processed_at?: string | null
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          amount?: number
+          category?: string
+          club_id?: string
+          created_at?: string | null
+          day_of_month?: number
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          last_processed_at?: string | null
+          name?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_expenses_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       transaction_history: {
         Row: {
           change_type: string
@@ -1807,6 +1869,7 @@ export type Database = {
           club_id: string
           created_at: string | null
           created_by: string | null
+          deleted_at: string | null
           description: string
           enrollment_id: string | null
           id: string
@@ -1845,6 +1908,7 @@ export type Database = {
           club_id: string
           created_at?: string | null
           created_by?: string | null
+          deleted_at?: string | null
           description: string
           enrollment_id?: string | null
           id?: string
@@ -1883,6 +1947,7 @@ export type Database = {
           club_id?: string
           created_at?: string | null
           created_by?: string | null
+          deleted_at?: string | null
           description?: string
           enrollment_id?: string | null
           id?: string
@@ -2150,6 +2215,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       app_role: ["admin", "user", "super_admin", "business_owner"],
@@ -2174,3 +2242,4 @@ export const Constants = {
     },
   },
 } as const
+

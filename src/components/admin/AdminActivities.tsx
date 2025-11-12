@@ -94,11 +94,8 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
     notes: "",
     picture_url: "",
     sessions_per_week: "1",
-    monthly_fee: "",
     duration_minutes: "60",
     max_capacity: "",
-    cost_per_session: "",
-    booking_enabled: true,
     requires_prebooking: false,
   });
   
@@ -157,11 +154,8 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
       notes: "",
       picture_url: "",
       sessions_per_week: "1",
-      monthly_fee: "",
       duration_minutes: "60",
       max_capacity: "",
-      cost_per_session: "",
-      booking_enabled: true,
       requires_prebooking: false,
     });
     setEditingItem(null);
@@ -183,11 +177,8 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
       notes: item.notes || "",
       picture_url: pictureUrl,
       sessions_per_week: item.sessions_per_week?.toString() || "1",
-      monthly_fee: item.monthly_fee?.toString() || "",
       duration_minutes: item.duration_minutes?.toString() || "60",
       max_capacity: item.max_capacity?.toString() || "",
-      cost_per_session: item.cost_per_session?.toString() || "",
-      booking_enabled: item.booking_enabled !== false,
       requires_prebooking: item.requires_prebooking || false,
     });
     await fetchSchedules(item.id);
@@ -205,11 +196,8 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
       notes: item.notes || "",
       picture_url: pictureUrl,
       sessions_per_week: item.sessions_per_week?.toString() || "1",
-      monthly_fee: item.monthly_fee?.toString() || "",
       duration_minutes: item.duration_minutes?.toString() || "60",
       max_capacity: item.max_capacity?.toString() || "",
-      cost_per_session: item.cost_per_session?.toString() || "",
-      booking_enabled: item.booking_enabled !== false,
       requires_prebooking: item.requires_prebooking || false,
     });
     
@@ -232,7 +220,7 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
   };
 
   const handleSubmit = async () => {
-    if (!formData.facility_id || !formData.title || !formData.monthly_fee) {
+    if (!formData.facility_id || !formData.title) {
       toast({ title: "Required fields missing", variant: "destructive" });
       return;
     }
@@ -259,11 +247,8 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
       notes: formData.notes || null,
       picture_url: formData.picture_url || null,
       sessions_per_week: calculatedSessionsPerWeek,
-      monthly_fee: parseFloat(formData.monthly_fee),
       duration_minutes: calculatedDuration,
       max_capacity: formData.max_capacity ? parseInt(formData.max_capacity) : null,
-      cost_per_session: formData.cost_per_session ? parseFloat(formData.cost_per_session) : null,
-      booking_enabled: formData.booking_enabled,
       requires_prebooking: formData.requires_prebooking,
     };
 
@@ -590,33 +575,6 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
                   </CardHeader>
                   <CardContent className="pt-6">
                     <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label>
-                          <DollarSign className="inline w-4 h-4 mr-1" />
-                          Monthly Fee ({clubCurrency}) *
-                        </Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={formData.monthly_fee}
-                          onChange={(e) => setFormData({ ...formData, monthly_fee: e.target.value })}
-                          placeholder="99.99"
-                        />
-                      </div>
-
-                      <div>
-                        <Label>
-                          <DollarSign className="inline w-4 h-4 mr-1" />
-                          Cost Per Session ({clubCurrency})
-                        </Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={formData.cost_per_session}
-                          onChange={(e) => setFormData({ ...formData, cost_per_session: e.target.value })}
-                          placeholder="15.00"
-                        />
-                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -797,17 +755,6 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
                     <div className="space-y-4">
                       <div className="flex items-center justify-between p-4 border rounded">
                         <div>
-                          <Label>Enable Booking</Label>
-                          <p className="text-sm text-muted-foreground">Allow members to book this activity</p>
-                        </div>
-                        <Switch
-                          checked={formData.booking_enabled}
-                          onCheckedChange={(checked) => setFormData({ ...formData, booking_enabled: checked })}
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between p-4 border rounded">
-                        <div>
                           <Label>Require Pre-booking</Label>
                           <p className="text-sm text-muted-foreground">Members must book in advance</p>
                         </div>
@@ -895,15 +842,6 @@ export const AdminActivities: React.FC<AdminActivitiesProps> = ({ clubId, clubCu
             <CardContent className="space-y-2">
               {item.description && (
                 <p className="text-sm text-muted-foreground line-clamp-2">{item.description}</p>
-              )}
-              <div className="flex items-center gap-2 text-sm">
-                <DollarSign className="h-3 w-3" />
-                <span className="font-medium">{formatCurrency(item.monthly_fee, clubCurrency)}/month</span>
-              </div>
-              {item.cost_per_session && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span>{formatCurrency(item.cost_per_session, clubCurrency)} per session</span>
-                </div>
               )}
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Clock className="h-3 w-3" />

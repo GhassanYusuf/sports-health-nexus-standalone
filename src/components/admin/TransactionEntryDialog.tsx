@@ -59,13 +59,6 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
   const queryClient = useQueryClient();
   const isEditMode = !!transaction;
 
-  // Debug: Log when dialog opens
-  useEffect(() => {
-    if (open) {
-      console.log('🔵 Dialog opened:', { isEditMode, transaction, clubId });
-    }
-  }, [open, isEditMode, transaction, clubId]);
-
   const form = useForm<TransactionFormValues>({
     resolver: zodResolver(transactionSchema),
     defaultValues: isEditMode ? {
@@ -84,6 +77,18 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
   });
 
   const transactionType = form.watch('transaction_type');
+
+  // Reset form when dialog closes
+  useEffect(() => {
+    if (!open && !isEditMode) {
+      // Clear form when dialog closes (only for new transactions, not edits)
+      form.reset({
+        transaction_type: 'expense',
+        transaction_date: new Date().toISOString().split('T')[0],
+        payment_method: 'cash',
+      });
+    }
+  }, [open, isEditMode, form]);
 
   // Reset form when transaction changes
   useEffect(() => {
@@ -147,6 +152,7 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
             amount: parseFloat(values.amount),
             vat_percentage_applied: club.vat_percentage || 0,
             payment_method: values.payment_method,
+            payment_status: transaction.payment_status || 'paid',
             transaction_date: values.transaction_date,
             notes: values.notes,
           },
@@ -156,7 +162,29 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
 
         if (error) {
           console.error('Update error:', error);
-          throw error;
+          // Extract the actual error message from the Edge Function response
+          // For 400 errors, data should have the error message
+          // For 500 errors, we need to parse from error.context
+          let errorMessage = (data as any)?.error;
+
+          if (!errorMessage && (error as any).context) {
+            try {
+              const response = (error as any).context as Response;
+              const responseClone = response.clone();
+              const errorData = await responseClone.json();
+              if (errorData?.error) {
+                errorMessage = errorData.error;
+              }
+            } catch (parseError) {
+              console.error('Failed to parse error response:', parseError);
+            }
+          }
+
+          if (!errorMessage) {
+            errorMessage = error.message || 'Failed to update transaction';
+          }
+
+          throw new Error(errorMessage);
         }
 
         toast.success('Transaction updated successfully');
@@ -166,7 +194,7 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
       } else {
         console.log('Creating new transaction');
 
-        // Create new transaction
+        // Create new transaction (always paid when manually recording)
         const { data, error } = await supabase.functions.invoke('create-transaction', {
           body: {
             club_id: clubId,
@@ -176,6 +204,7 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
             amount: parseFloat(values.amount),
             vat_percentage_applied: club.vat_percentage || 0,
             payment_method: values.payment_method,
+            payment_status: 'paid', // Always paid when recording expense
             transaction_date: values.transaction_date,
             notes: values.notes,
           },
@@ -185,7 +214,29 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
 
         if (error) {
           console.error('Create error:', error);
-          throw error;
+          // Extract the actual error message from the Edge Function response
+          // For 400 errors, data should have the error message
+          // For 500 errors, we need to parse from error.context
+          let errorMessage = (data as any)?.error;
+
+          if (!errorMessage && (error as any).context) {
+            try {
+              const response = (error as any).context as Response;
+              const responseClone = response.clone();
+              const errorData = await responseClone.json();
+              if (errorData?.error) {
+                errorMessage = errorData.error;
+              }
+            } catch (parseError) {
+              console.error('Failed to parse error response:', parseError);
+            }
+          }
+
+          if (!errorMessage) {
+            errorMessage = error.message || 'Failed to create transaction';
+          }
+
+          throw new Error(errorMessage);
         }
 
         toast.success('Transaction recorded successfully');
@@ -195,7 +246,9 @@ export function TransactionEntryDialog({ clubId, currency, open, onOpenChange, t
       }
     } catch (error: any) {
       console.error(`Error ${isEditMode ? 'updating' : 'creating'} transaction:`, error);
-      toast.error(error.message || `Failed to ${isEditMode ? 'update' : 'record'} transaction`);
+      // Show the specific error message (e.g., "Insufficient funds")
+      const errorMessage = error.message || `Failed to ${isEditMode ? 'update' : 'record'} transaction`;
+      toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);
     }

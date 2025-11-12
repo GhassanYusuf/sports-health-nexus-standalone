@@ -45,6 +45,49 @@ serve(async (req) => {
     const vatAmount = parseFloat(amount) * (parseFloat(vat_percentage_applied) / 100);
     const totalAmount = parseFloat(amount) + vatAmount;
 
+    // Check cash balance for expenses that are marked as paid
+    if (transaction_type === 'expense' && payment_status === 'paid') {
+      console.log(`[create-transaction] Checking cash balance for expense payment`);
+
+      // Fetch all transactions to calculate current cash balance
+      const { data: allTransactions, error: transactionsError } = await supabaseAdmin
+        .from('transaction_ledger')
+        .select('transaction_type, total_amount, payment_status')
+        .eq('club_id', club_id)
+        .is('deleted_at', null);
+
+      if (transactionsError) {
+        console.error('[create-transaction] Error fetching transactions:', transactionsError);
+        throw transactionsError;
+      }
+
+      // Calculate current cash balance (same logic as AdminFinancials.tsx)
+      let currentCash = 0;
+      allTransactions?.forEach((t: any) => {
+        const txAmount = parseFloat(String(t.total_amount || 0));
+        if (['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(t.transaction_type)) {
+          if (t.payment_status === 'paid') {
+            currentCash += txAmount;
+          }
+        } else if (t.transaction_type === 'expense') {
+          if (t.payment_status === 'paid') {
+            currentCash -= txAmount;
+          }
+        } else if (t.transaction_type === 'refund') {
+          if (t.payment_status === 'paid') {
+            currentCash -= txAmount;
+          }
+        }
+      });
+
+      console.log(`[create-transaction] Current cash: ${currentCash}, Required: ${totalAmount}`);
+
+      // Check if there's enough cash
+      if (currentCash < totalAmount) {
+        throw new Error(`Insufficient funds. Available cash: ${currentCash.toFixed(2)}, Required: ${totalAmount.toFixed(2)}`);
+      }
+    }
+
     // Generate receipt number
     const { data: receiptNumber, error: receiptError } = await supabaseAdmin
       .rpc('generate_receipt_number', { p_club_id: club_id });
@@ -94,11 +137,17 @@ serve(async (req) => {
       JSON.stringify(transaction),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error('[create-transaction] Error:', error);
+
+    // Use 400 for validation errors (like insufficient funds), 500 for actual server errors
+    const isValidationError = error.message?.includes('Insufficient funds') ||
+                              error.message?.includes('out of range');
+    const statusCode = isValidationError ? 400 : 500;
+
     return new Response(
       JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

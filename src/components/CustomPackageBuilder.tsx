@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Clock, Users, AlertTriangle, Sparkles, CheckCircle, DollarSign, MapPin } from "lucide-react";
+import { Clock, Users, AlertTriangle, CheckCircle, MapPin } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import AIAdvisorChat from './AIAdvisorChat';
@@ -28,7 +28,6 @@ interface Facility {
 interface Activity {
   id: string;
   title: string;
-  monthly_fee: number;
   sessions_per_week: number;
   notes: string | null;
   picture_url: string | null;
@@ -60,16 +59,6 @@ const CustomPackageBuilder: React.FC<CustomPackageBuilderProps> = ({ clubId, onB
   const [showAIChat, setShowAIChat] = useState(false);
   const [conflicts, setConflicts] = useState<string[]>([]);
 
-  const formatCurrency = (amount: number) => {
-    const hasDecimals = amount % 1 !== 0;
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: hasDecimals ? 2 : 0,
-      maximumFractionDigits: hasDecimals ? 2 : 0,
-    }).format(amount);
-  };
-
   useEffect(() => {
     fetchActivitiesAndInstructors();
   }, [clubId]);
@@ -84,7 +73,6 @@ const CustomPackageBuilder: React.FC<CustomPackageBuilderProps> = ({ clubId, onB
         .select(`
           id,
           title,
-          monthly_fee,
           sessions_per_week,
           notes,
           picture_url,
@@ -189,12 +177,7 @@ const CustomPackageBuilder: React.FC<CustomPackageBuilderProps> = ({ clubId, onB
     setConflicts(checkScheduleConflicts(newSelection));
   };
 
-  const calculateTotalPrice = () => {
-    const selectedActivitiesData = activities.filter(a => selectedActivities.includes(a.id));
-    const basePrice = selectedActivitiesData.reduce((sum, activity) => sum + Number(activity.monthly_fee), 0);
-    const discount = selectedActivities.length > 2 ? 0.15 : 0;
-    return Math.round(basePrice * (1 - discount));
-  };
+  // Note: Package pricing is now set manually at the package level, not calculated from activities
 
   const canCreatePackage = () => {
     const allHaveInstructors = selectedActivities.every(actId => selectedInstructors[actId]);
@@ -274,12 +257,11 @@ const CustomPackageBuilder: React.FC<CustomPackageBuilderProps> = ({ clubId, onB
               <div className="flex items-center justify-between">
                 <CardTitle>Select Activities</CardTitle>
                 <Button 
-                  variant="outline" 
+                  variant="outline"
                   size="sm"
                   onClick={() => setShowAIChat(true)}
                   className="flex items-center gap-2"
                 >
-                  <Sparkles className="w-4 h-4" />
                   Get AI Help
                 </Button>
               </div>
@@ -318,10 +300,6 @@ const CustomPackageBuilder: React.FC<CustomPackageBuilderProps> = ({ clubId, onB
                             {activity.notes || 'No description available'}
                           </p>
                           <div className="flex items-center gap-4 mt-2 flex-wrap">
-                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                              <DollarSign className="w-3 h-3" />
-                              {formatCurrency(activity.monthly_fee)}/month
-                            </div>
                             <div className="flex items-center gap-1 text-sm text-muted-foreground">
                               <MapPin className="w-3 h-3" />
                               {activity.facility.name}
@@ -439,15 +417,14 @@ const CustomPackageBuilder: React.FC<CustomPackageBuilderProps> = ({ clubId, onB
               {selectedActivities.length > 0 && (
                 <div>
                   <div className="flex justify-between items-center pt-4 border-t">
-                    <span className="font-semibold">Total Price:</span>
+                    <span className="font-semibold">Selected Activities:</span>
                     <span className="text-2xl font-bold text-primary">
-                      {formatCurrency(calculateTotalPrice())}
-                      <span className="text-sm text-muted-foreground">/month</span>
+                      {selectedActivities.length}
                     </span>
                   </div>
-                  {selectedActivities.length > 2 && (
-                    <p className="text-xs text-success">15% multi-activity discount applied!</p>
-                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Package price will be set by admin
+                  </p>
                 </div>
               )}
 

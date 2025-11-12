@@ -75,6 +75,47 @@ serve(async (req) => {
       throw new Error('Failed to generate receipt number');
     }
 
+    // Check cash balance before processing refund
+    console.log(`[create-refund] Checking cash balance before processing refund`);
+
+    // Fetch all transactions to calculate current cash balance
+    const { data: allTransactions, error: transactionsError } = await supabaseAdmin
+      .from('transaction_ledger')
+      .select('transaction_type, total_amount, payment_status')
+      .eq('club_id', originalTransaction.club_id)
+      .is('deleted_at', null);
+
+    if (transactionsError) {
+      console.error('[create-refund] Error fetching transactions:', transactionsError);
+      throw transactionsError;
+    }
+
+    // Calculate current cash balance (same logic as AdminFinancials.tsx)
+    let currentCash = 0;
+    allTransactions?.forEach((t: any) => {
+      const txAmount = parseFloat(String(t.total_amount || 0));
+      if (['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(t.transaction_type)) {
+        if (t.payment_status === 'paid') {
+          currentCash += txAmount;
+        }
+      } else if (t.transaction_type === 'expense') {
+        if (t.payment_status === 'paid') {
+          currentCash -= txAmount;
+        }
+      } else if (t.transaction_type === 'refund') {
+        if (t.payment_status === 'paid') {
+          currentCash -= txAmount;
+        }
+      }
+    });
+
+    console.log(`[create-refund] Current cash: ${currentCash}, Required: ${refundAmountValue}`);
+
+    // Check if there's enough cash
+    if (currentCash < refundAmountValue) {
+      throw new Error(`Insufficient funds. Available cash: ${currentCash.toFixed(2)}, Required: ${refundAmountValue.toFixed(2)}`);
+    }
+
     // Create refund transaction
     const { data: refundTransaction, error: insertError } = await supabaseAdmin
       .from('transaction_ledger')

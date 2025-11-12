@@ -106,7 +106,27 @@ export function RefundDialog({
 
       if (error) {
         console.error('❌ Refund error:', error);
-        throw new Error(error.message || 'Failed to process refund');
+        // Extract the actual error message from the Edge Function response
+        let errorMessage = (data as any)?.error;
+
+        if (!errorMessage && (error as any).context) {
+          try {
+            const response = (error as any).context as Response;
+            const responseClone = response.clone();
+            const errorData = await responseClone.json();
+            if (errorData?.error) {
+              errorMessage = errorData.error;
+            }
+          } catch (parseError) {
+            console.error('Failed to parse error response:', parseError);
+          }
+        }
+
+        if (!errorMessage) {
+          errorMessage = error.message || 'Failed to process refund';
+        }
+
+        throw new Error(errorMessage);
       }
 
       toast.success(`${refundType === 'full' ? 'Full' : 'Partial'} refund processed successfully`);

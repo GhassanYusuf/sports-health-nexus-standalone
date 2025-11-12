@@ -39,6 +39,48 @@ serve(async (req) => {
     if (expenseError) throw expenseError
     if (!expense) throw new Error('Recurring expense not found')
 
+    // Check cash balance before processing expense
+    console.log('[process-recurring-expense] Checking cash balance before processing');
+
+    // Fetch all transactions to calculate current cash balance
+    const { data: allTransactions, error: transactionsError } = await supabaseClient
+      .from('transaction_ledger')
+      .select('transaction_type, total_amount, payment_status')
+      .eq('club_id', expense.club_id)
+      .is('deleted_at', null);
+
+    if (transactionsError) {
+      console.error('[process-recurring-expense] Error fetching transactions:', transactionsError);
+      throw transactionsError;
+    }
+
+    // Calculate current cash balance (same logic as AdminFinancials.tsx)
+    let currentCash = 0;
+    allTransactions?.forEach((t: any) => {
+      const txAmount = parseFloat(String(t.total_amount || 0));
+      if (['enrollment_fee', 'package_fee', 'product_sale', 'facility_rental'].includes(t.transaction_type)) {
+        if (t.payment_status === 'paid') {
+          currentCash += txAmount;
+        }
+      } else if (t.transaction_type === 'expense') {
+        if (t.payment_status === 'paid') {
+          currentCash -= txAmount;
+        }
+      } else if (t.transaction_type === 'refund') {
+        if (t.payment_status === 'paid') {
+          currentCash -= txAmount;
+        }
+      }
+    });
+
+    const expenseAmount = parseFloat(String(expense.amount));
+    console.log(`[process-recurring-expense] Current cash: ${currentCash}, Required: ${expenseAmount}`);
+
+    // Check if there's enough cash
+    if (currentCash < expenseAmount) {
+      throw new Error(`Insufficient funds. Available cash: ${currentCash.toFixed(2)}, Required: ${expenseAmount.toFixed(2)}`);
+    }
+
     // Generate sequential receipt number
     // Get the last auto expense receipt number
     const { data: lastTransaction } = await supabaseClient
@@ -106,7 +148,7 @@ serve(async (req) => {
         status: 200,
       }
     )
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error processing recurring expense:', error)
     return new Response(
       JSON.stringify({

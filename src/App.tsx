@@ -21,6 +21,7 @@ import ClubDetails from "./pages/ClubDetails";
 import DatabaseBackupRestore from "./pages/DatabaseBackupRestore";
 import Notifications from "./pages/Notifications";
 import Messages from "./pages/Messages";
+import ReceiptPreviewTest from "./pages/ReceiptPreviewTest";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ const App = () => (
           <Route path="/club/:countryISO/:clubSlug" element={<ClubDetails />} />
           <Route path="/club-owner-signup" element={<ClubOwnerSignup />} />
           <Route path="/database-backup-restore" element={<DatabaseBackupRestore />} />
+          <Route path="/receipt-preview-test" element={<ReceiptPreviewTest />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
