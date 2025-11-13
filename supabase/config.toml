@@ -51,5 +51,5 @@ verify_jwt = true
 [functions.check-expiring-subscriptions]
 verify_jwt = false
 
-[functions.process-recurring-expense]
+[functions.export-auth-users]
 verify_jwt = true

@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Download, Upload, Database, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { Download, Upload, Database, AlertTriangle, CheckCircle2, Info, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -167,6 +167,63 @@ export const AdminBackupRestore = () => {
     }
   };
 
+  const handleExportAuthUsers = async () => {
+    setIsLoading(true);
+    setProgress(10);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error("Not authenticated");
+      }
+
+      setProgress(30);
+
+      const response = await supabase.functions.invoke("export-auth-users", {
+        method: "POST",
+      });
+
+      setProgress(70);
+
+      if (response.error) {
+        throw new Error(response.error.message || "Failed to export auth users");
+      }
+
+      // The response.data contains the users
+      const exportJson = JSON.stringify(response.data, null, 2);
+      const blob = new Blob([exportJson], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      a.download = `auth-users-export-${timestamp}.json`;
+      
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setProgress(100);
+
+      toast({
+        title: "Auth Users Exported",
+        description: `Successfully exported ${response.data?.count || 0} users.`,
+      });
+    } catch (error) {
+      console.error("Export error:", error);
+      toast({
+        title: "Export Failed",
+        description: error.message || "Failed to export auth users.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setProgress(0), 1000);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -202,7 +259,7 @@ export const AdminBackupRestore = () => {
         </Card>
       )}
 
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-3 gap-6">
         {/* Download Backup Card */}
         <Card className="border-primary/20 hover:shadow-lg transition-all duration-300 hover:border-primary/40">
           <CardHeader>
@@ -302,6 +359,63 @@ export const AdminBackupRestore = () => {
                     <li>This will replace all current data</li>
                     <li>Cannot be undone once started</li>
                     <li>Create a backup before restoring</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Export Auth Users Card */}
+        <Card className="border-accent/20 hover:shadow-lg transition-all duration-300 hover:border-accent/40">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-lg bg-accent/10">
+                <Users className="w-6 h-6 text-accent" />
+              </div>
+              <div>
+                <CardTitle className="text-xl">Export Auth Users</CardTitle>
+                <CardDescription>
+                  Download all authentication users
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Export all users from the authentication system including emails, 
+              metadata, and encrypted passwords for local database migration.
+            </p>
+            
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={handleExportAuthUsers}
+                    disabled={isLoading}
+                    className="w-full"
+                    size="lg"
+                    variant="outline"
+                  >
+                    <Users className="w-4 h-4 mr-2" />
+                    Export Auth Users
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Exports all users with authentication data</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            <div className="pt-4 border-t">
+              <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-medium mb-1">Includes:</p>
+                  <ul className="space-y-1 list-disc list-inside">
+                    <li>User IDs and emails</li>
+                    <li>Encrypted passwords</li>
+                    <li>User metadata and timestamps</li>
                   </ul>
                 </div>
               </div>
