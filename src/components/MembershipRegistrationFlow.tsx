@@ -134,6 +134,7 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
   const [addChildDialogOpen, setAddChildDialogOpen] = useState(false);
   const [payLater, setPayLater] = useState(false);
   const [packageActivities, setPackageActivities] = useState<Record<string, any[]>>({});
+  const [memberEnrolledPackages, setMemberEnrolledPackages] = useState<Record<string, string[]>>({});
 
   // Initialize with pre-selected members or auto-select based on hasChildren
   useEffect(() => {
@@ -252,6 +253,70 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
       setStep('details');
     }
   }, [preSelectedMembers, hasChildren, existingUserMode, userProfile, existingChildren]);
+
+  // Fetch existing enrollments for each member
+  useEffect(() => {
+    const fetchMemberEnrollments = async () => {
+      if (!existingUserMode || registrants.length === 0) return;
+
+      const enrollmentsMap: Record<string, string[]> = {};
+
+      for (const reg of registrants) {
+        try {
+          // Find the club member record for this registrant
+          let memberId = null;
+
+          if (reg.type === 'self') {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              const { data: member } = await supabase
+                .from('club_members')
+                .select('id')
+                .eq('club_id', clubId)
+                .eq('user_id', user.id)
+                .maybeSingle();
+              memberId = member?.id;
+            }
+          } else {
+            // For children, find by matching name and DOB
+            if (existingChildren) {
+              const child = existingChildren.find(c =>
+                c.name === reg.name && c.date_of_birth === reg.dateOfBirth
+              );
+              if (child) {
+                const { data: member } = await supabase
+                  .from('club_members')
+                  .select('id')
+                  .eq('club_id', clubId)
+                  .eq('child_id', child.id)
+                  .maybeSingle();
+                memberId = member?.id;
+              }
+            }
+          }
+
+          if (memberId) {
+            // Fetch active enrollments for this member
+            const { data: enrollments } = await supabase
+              .from('package_enrollments')
+              .select('package_id')
+              .eq('member_id', memberId)
+              .eq('is_active', true);
+
+            if (enrollments) {
+              enrollmentsMap[reg.id] = enrollments.map(e => e.package_id);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching enrollments for', reg.name, error);
+        }
+      }
+
+      setMemberEnrolledPackages(enrollmentsMap);
+    };
+
+    fetchMemberEnrollments();
+  }, [registrants, existingUserMode, clubId, existingChildren]);
 
   // Fetch package activities with schedule and instructor info
   useEffect(() => {
@@ -1539,7 +1604,12 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
         })
         .map((reg) => {
         const age = reg.dateOfBirth ? calculateAge(reg.dateOfBirth) : null;
+        const enrolledPackageIds = memberEnrolledPackages[reg.id] || [];
+
         const eligiblePackages = packages.filter(pkg => {
+          // Filter out packages member is already enrolled in
+          if (enrolledPackageIds.includes(pkg.id)) return false;
+
           // Filter by age
           if (age !== null) {
             if (pkg.age_min && age < pkg.age_min) return false;
@@ -1574,10 +1644,18 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
             </CardHeader>
             <CardContent>
               {eligiblePackages.length === 0 ? (
-                <Alert variant="destructive">
+                <Alert variant={enrolledPackageIds.length > 0 ? "default" : "destructive"}>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    No eligible packages found for {reg.name}. Please contact the club administrator.
+                    {enrolledPackageIds.length > 0 ? (
+                      <span>
+                        <strong>{reg.name}</strong> is already enrolled in all available packages for this club.
+                      </span>
+                    ) : (
+                      <span>
+                        No eligible packages found for <strong>{reg.name}</strong>. Please contact the club administrator.
+                      </span>
+                    )}
                   </AlertDescription>
                 </Alert>
               ) : (
