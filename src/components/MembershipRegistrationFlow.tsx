@@ -137,15 +137,69 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
 
   // Initialize with pre-selected members or auto-select based on hasChildren
   useEffect(() => {
-    if (existingUserMode && registrants.length === 0 && userProfile) {
-      // For existing users, auto-populate with profile data
+    if (existingUserMode && registrants.length === 0 && userProfile && initialPackageId) {
+      // Smart package-based auto-selection for logged-in users
+      const selectedPkg = packages.find(p => p.id === initialPackageId);
+
+      if (selectedPkg) {
+        // Determine if package is child-only or adult-eligible
+        const isChildPackage = selectedPkg.age_max && selectedPkg.age_max < 18;
+        const isAdultPackage = !selectedPkg.age_min || selectedPkg.age_min <= 18;
+
+        if (isChildPackage && !isAdultPackage) {
+          // Child-only package
+          if (!hasChildren || existingChildren?.length === 0) {
+            // No children - show special message (stay on select-type but show custom UI)
+            setRegistrationType('kids-only');
+            setStep('select-type');
+          } else {
+            // Has children - auto-select all children and skip to package selection
+            setRegistrationType('kids-only');
+            const childRegistrants: Registrant[] = existingChildren.map(child => ({
+              id: Math.random().toString(36).substr(2, 9),
+              type: 'child',
+              packageId: initialPackageId,
+              name: child.name,
+              dateOfBirth: child.date_of_birth,
+              gender: child.gender,
+              nationality: child.nationality,
+              bloodType: child.blood_type || '',
+              avatarUrl: child.avatar_url
+            }));
+            setRegistrants(childRegistrants);
+            setStep('package-selection');
+          }
+        } else {
+          // Adult or mixed package - auto-select self and skip to package selection
+          setRegistrationType('self');
+          const selfRegistrant: Registrant = {
+            id: Math.random().toString(36).substr(2, 9),
+            type: 'self',
+            packageId: initialPackageId,
+            name: userProfile.name,
+            dateOfBirth: userProfile.date_of_birth,
+            gender: userProfile.gender,
+            nationality: userProfile.nationality,
+            bloodType: userProfile.blood_type || '',
+            avatarUrl: userProfile.avatar_url,
+            email: userProfile.email,
+            phone: userProfile.phone,
+            countryCode: userProfile.country_code,
+            address: userProfile.address
+          };
+          setRegistrants([selfRegistrant]);
+          setStep('package-selection');
+        }
+      }
+    } else if (existingUserMode && registrants.length === 0 && userProfile && !initialPackageId) {
+      // No package pre-selected, show selection screen
       if (hasChildren === false) {
         // No children - auto-select "self" and pre-populate
         setRegistrationType('self');
         const selfRegistrant: Registrant = {
           id: Math.random().toString(36).substr(2, 9),
           type: 'self',
-          packageId: initialPackageId || '',
+          packageId: '',
           name: userProfile.name,
           dateOfBirth: userProfile.date_of_birth,
           gender: userProfile.gender,
@@ -158,9 +212,8 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
           address: userProfile.address
         };
         setRegistrants([selfRegistrant]);
-        setStep('select-type'); // Still show selection so they can pick packages
+        setStep('select-type');
       }
-      // If they have children, show the selection screen
     } else if (preSelectedMembers && preSelectedMembers.length > 0 && registrants.length === 0) {
       const hasSelf = preSelectedMembers.some(m => m.type === 'self');
       const hasKids = preSelectedMembers.some(m => m.type === 'child');
@@ -627,7 +680,12 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
     };
     setRegistrants([...registrants, newRegistrant]);
     setAddChildDialogOpen(false);
-    
+
+    // If this is from the "no kids" screen and a package is selected, proceed to package selection
+    if (existingUserMode && initialPackageId && registrants.length === 0) {
+      setStep('package-selection');
+    }
+
     toast({
       title: "Child added",
       description: `${childData.name} has been added to the registration`
@@ -1042,14 +1100,53 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
     }
   };
 
-  const renderSelectType = () => (
-    <div className="space-y-6">
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold mb-2">Who are you registering?</h2>
-        <p className="text-muted-foreground">Choose your registration type</p>
-      </div>
+  const renderSelectType = () => {
+    // Special case: child package selected but user has no children
+    if (existingUserMode && registrationType === 'kids-only' && (!hasChildren || existingChildren?.length === 0)) {
+      return (
+        <div className="space-y-6">
+          <div className="text-center mb-6">
+            <h2 className="text-2xl font-bold mb-2">No Children Found</h2>
+            <p className="text-muted-foreground">You need to add a child to register for this package</p>
+          </div>
 
-      <div className="grid md:grid-cols-3 gap-4">
+          <Card className="max-w-md mx-auto">
+            <CardContent className="p-8 text-center space-y-4">
+              <Users className="h-16 w-16 mx-auto text-muted-foreground opacity-50" />
+              <div>
+                <h3 className="text-lg font-semibold mb-2">You don't have any kids registered</h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  This package is for children only. Please add a child to your account to continue with registration.
+                </p>
+              </div>
+              <Button
+                onClick={() => setAddChildDialogOpen(true)}
+                className="w-full"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add a Child
+              </Button>
+              <Button
+                variant="outline"
+                onClick={onCancel}
+                className="w-full"
+              >
+                Back to Packages
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="text-center mb-6">
+          <h2 className="text-2xl font-bold mb-2">Who are you registering?</h2>
+          <p className="text-muted-foreground">Choose your registration type</p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-4">
         <Card 
           className={cn(
             "cursor-pointer transition-all hover:shadow-lg",
@@ -1183,8 +1280,9 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
           </CardContent>
         </Card>
       )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   const renderDetails = () => (
     <div className="space-y-6">

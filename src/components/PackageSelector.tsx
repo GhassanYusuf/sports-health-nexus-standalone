@@ -71,6 +71,9 @@ const PackageSelector = ({ packages, clubId, currency = 'USD', initialPackageId 
   const [showAuthDialog, setShowAuthDialog] = useState(false);
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
   const [packagesWithActivities, setPackagesWithActivities] = useState<PackageWithActivities[]>([]);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [existingChildren, setExistingChildren] = useState<any[]>([]);
+  const [clubData, setClubData] = useState<any>(null);
 
   // Check for initial package selection from URL
   useEffect(() => {
@@ -94,14 +97,33 @@ const PackageSelector = ({ packages, clubId, currency = 'USD', initialPackageId 
   const handleSelectPackage = async (packageId: string) => {
     // Check if user is authenticated
     const { data: { user } } = await supabase.auth.getUser();
-    
+
     if (!user) {
       // User not logged in, show auth dialog
       setSelectedPackage(packageId);
       setShowAuthDialog(true);
     } else {
-      // User logged in, proceed to registration
+      // User logged in, fetch their profile and children data
       setSelectedPackage(packageId);
+
+      // Fetch user profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      setUserProfile(profile);
+
+      // Fetch user's children
+      const { data: children } = await supabase
+        .from('children')
+        .select('*')
+        .eq('parent_user_id', user.id);
+
+      setExistingChildren(children || []);
+
+      // Show registration flow
       setShowRegistrationFlow(true);
     }
   };
@@ -121,6 +143,23 @@ const PackageSelector = ({ packages, clubId, currency = 'USD', initialPackageId 
   useEffect(() => {
     fetchPackageActivities();
   }, [packages]);
+
+  // Fetch club data
+  useEffect(() => {
+    const fetchClubData = async () => {
+      if (!clubId) return;
+
+      const { data } = await supabase
+        .from('clubs')
+        .select('id, name, currency, enrollment_fee, vat_percentage, vat_registration_number')
+        .eq('id', clubId)
+        .maybeSingle();
+
+      setClubData(data);
+    };
+
+    fetchClubData();
+  }, [clubId]);
 
   const fetchPackageActivities = async () => {
     const enrichedPackages = await Promise.all(
@@ -215,13 +254,22 @@ const PackageSelector = ({ packages, clubId, currency = 'USD', initialPackageId 
         packages={packages}
         currency={currency}
         initialPackageId={selectedPackage || undefined}
+        existingUserMode={!!userProfile}
+        userProfile={userProfile}
+        existingChildren={existingChildren}
+        hasChildren={existingChildren.length > 0}
+        clubData={clubData}
         onComplete={() => {
           setShowRegistrationFlow(false);
           setSelectedPackage(null);
+          setUserProfile(null);
+          setExistingChildren([]);
         }}
         onCancel={() => {
           setShowRegistrationFlow(false);
           setSelectedPackage(null);
+          setUserProfile(null);
+          setExistingChildren([]);
         }}
       />
     );
