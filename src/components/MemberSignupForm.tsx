@@ -293,10 +293,35 @@ export const MemberSignupForm: React.FC<{
         });
       }
 
+      // Verify profile was created successfully before navigating
+      let profileVerified = false;
+      for (let i = 0; i < 5; i++) {
+        const { data: checkProfile } = await supabase
+          .from('profiles')
+          .select('user_id')
+          .eq('user_id', authData.user.id)
+          .maybeSingle();
+
+        if (checkProfile) {
+          profileVerified = true;
+          break;
+        }
+        // Wait 100ms before retrying
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      if (!profileVerified) {
+        console.warn('Profile verification timed out, navigating anyway');
+      }
+
       toast({
         title: "Welcome to TakeOne Family! 🎉",
         description: "Your account is ready!",
       });
+
+      // Trigger session refresh to update auth state
+      await supabase.auth.refreshSession();
+
       onSuccess();
     } catch (err) {
       console.error('Signup error details:', err);
