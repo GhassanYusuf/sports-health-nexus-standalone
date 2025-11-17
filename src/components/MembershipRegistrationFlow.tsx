@@ -2366,14 +2366,6 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
     (existingUserMode && !initialPackageId && step === 'package-selection') ||
     (!existingUserMode && step === 'details');
 
-  // Debug logging
-  console.log('Step Indicator Debug:', {
-    existingUserMode,
-    initialPackageId,
-    step,
-    isStep2Highlighted
-  });
-
   return (
     <div className="w-full p-6">
       {/* Progress Steps */}
