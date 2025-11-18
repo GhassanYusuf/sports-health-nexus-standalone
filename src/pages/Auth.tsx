@@ -40,11 +40,17 @@ const Auth: React.FC = () => {
         return;
       }
       if (session?.user && event === 'SIGNED_IN') {
-        // Get return URL from params
+        // Don't redirect if we're in password recovery mode
         const params = new URLSearchParams(window.location.search);
+        const modeParam = params.get('mode');
+
+        if (modeParam === 'update-password') {
+          return; // Stay on password reset form
+        }
+
         const returnUrl = params.get('returnUrl');
         const packageId = params.get('packageId');
-        
+
         if (returnUrl) {
           // Navigate back with package selection
           navigate(`${returnUrl}${packageId ? `?packageId=${packageId}` : ''}`);
@@ -56,6 +62,13 @@ const Auth: React.FC = () => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         const params = new URLSearchParams(window.location.search);
+        const modeParam = params.get('mode');
+
+        // Don't redirect if we're in password recovery mode
+        if (modeParam === 'update-password') {
+          return;
+        }
+
         const returnUrl = params.get('returnUrl');
         if (returnUrl) {
           navigate(returnUrl);
