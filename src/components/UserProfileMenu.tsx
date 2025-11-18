@@ -25,8 +25,10 @@ export function UserProfileMenu() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [hasChildren, setHasChildren] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // Initial fetch
     fetchUserData();
 
     // Listen for auth state changes (sign out, sign in, etc)
@@ -39,8 +41,21 @@ export function UserProfileMenu() {
         setProfile(null);
         setUserRole(null);
         setHasChildren(false);
+        setIsLoading(false);
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        console.log('👤 User signed in/updated - fetching data');
+        // Don't reset loading if we already have a profile (prevents flash)
+        if (!profile) {
+          setIsLoading(true);
+        }
+        // Fetch immediately
+        fetchUserData();
       } else if (session?.user) {
-        console.log('👤 User signed in - fetching data');
+        console.log('👤 Session active - fetching data');
+        // Don't reset loading if we already have a profile (prevents flash)
+        if (!profile) {
+          setIsLoading(true);
+        }
         fetchUserData();
       }
     });
@@ -53,39 +68,53 @@ export function UserProfileMenu() {
 
   const fetchUserData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
 
-    // Fetch profile
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('name, avatar_url, email')
-      .eq('user_id', user.id)
-      .single();
-
-    if (profileData) {
-      setProfile(profileData);
+    if (!user) {
+      console.log('❌ No user found - not fetching profile');
+      setProfile(null);
+      setUserRole(null);
+      setHasChildren(false);
+      setIsLoading(false);
+      return;
     }
 
-    // Fetch role
-    const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id)
-      .order('role')
-      .limit(1)
-      .maybeSingle();
+    console.log('📡 Fetching profile for user:', user.id);
 
-    if (roleData) {
-      setUserRole(roleData.role);
+    // Fetch all data in parallel
+    const [profileResult, roleResult, childrenResult] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('name, avatar_url, email')
+        .eq('user_id', user.id)
+        .single(),
+      supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user.id)
+        .order('role')
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('children')
+        .select('*', { count: 'exact', head: true })
+        .eq('parent_user_id', user.id)
+    ]);
+
+    // Update all state at once to prevent flash
+    if (profileResult.data) {
+      console.log('✅ Profile fetched:', profileResult.data.name);
+      setProfile(profileResult.data);
+    } else {
+      console.log('⚠️ No profile data found');
+      setProfile(null);
     }
 
-    // Check if user has children
-    const { count } = await supabase
-      .from('children')
-      .select('*', { count: 'exact', head: true })
-      .eq('parent_user_id', user.id);
+    if (roleResult.data) {
+      setUserRole(roleResult.data.role);
+    }
 
-    setHasChildren((count ?? 0) > 0);
+    setHasChildren((childrenResult.count ?? 0) > 0);
+    setIsLoading(false);
   };
 
   const handleSignOut = async () => {
@@ -105,9 +134,17 @@ export function UserProfileMenu() {
       .substring(0, 2);
   };
 
+  // Show nothing while loading to avoid flash
+  if (isLoading) {
+    return (
+      <div className="h-10 w-20 bg-muted animate-pulse rounded-md" />
+    );
+  }
+
+  // Show Sign In button only after loading is complete and no profile found
   if (!profile) {
     return (
-      <Button 
+      <Button
         onClick={() => navigate("/auth")}
         className="bg-brand-red hover:bg-brand-red-dark"
       >

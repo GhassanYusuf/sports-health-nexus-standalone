@@ -1,11 +1,14 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Download, ExternalLink, Loader2 } from "lucide-react";
+import { Download, ExternalLink, Loader2, Mail } from "lucide-react";
 import { generateReceiptHtml } from "@/lib/generateReceiptHtml";
 import { ReceiptData } from "@/types/receipt";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 /**
  * Receipt Preview Test Page - Using Real Club Data
@@ -18,6 +21,9 @@ export default function ReceiptPreviewTest() {
   const [receiptHtml, setReceiptHtml] = useState<string>("");
   const [templates, setTemplates] = useState<Record<string, { data: ReceiptData; title: string; description: string }>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -197,6 +203,46 @@ export default function ReceiptPreviewTest() {
     }
   };
 
+  const handleSendTestEmail = async () => {
+    if (!testEmail) {
+      toast({
+        title: "Error",
+        description: "Please enter an email address",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSendingEmail(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-receipt-email", {
+        body: {
+          testMode: true,
+          recipientEmail: testEmail,
+        },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Success!",
+        description: `Test email sent to ${testEmail}`,
+      });
+
+      setShowEmailDialog(false);
+      setTestEmail("");
+    } catch (error: any) {
+      console.error("Error sending email:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send email. Check console for details.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="container mx-auto p-6 max-w-7xl">
@@ -308,6 +354,15 @@ export default function ReceiptPreviewTest() {
                 <ExternalLink className="h-4 w-4 mr-2" />
                 Open in New Tab
               </Button>
+              <Button
+                variant="default"
+                size="sm"
+                className="bg-green-600 hover:bg-green-700"
+                onClick={() => setShowEmailDialog(true)}
+              >
+                <Mail className="h-4 w-4 mr-2" />
+                Send Test Email
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -400,6 +455,66 @@ export default function ReceiptPreviewTest() {
           and real transaction data.
         </p>
       </div>
+
+      <Dialog open={showEmailDialog} onOpenChange={setShowEmailDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Test Receipt Email</DialogTitle>
+            <DialogDescription>
+              Enter your email address to receive a test receipt. This will send a professional HTML receipt email using Gmail SMTP.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email Address</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="your@email.com"
+                value={testEmail}
+                onChange={(e) => setTestEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleSendTestEmail();
+                  }
+                }}
+              />
+            </div>
+            <div className="text-sm text-muted-foreground bg-yellow-50 border border-yellow-200 rounded p-3">
+              <p className="font-semibold text-yellow-900 mb-1">Note:</p>
+              <p className="text-yellow-800">
+                This will send a test receipt with sample data to the email you provide.
+                Make sure your Gmail SMTP is configured correctly.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowEmailDialog(false)}
+              disabled={isSendingEmail}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSendTestEmail}
+              disabled={isSendingEmail || !testEmail}
+            >
+              {isSendingEmail ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Mail className="h-4 w-4 mr-2" />
+                  Send Email
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

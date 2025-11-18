@@ -134,18 +134,23 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
   const [addChildDialogOpen, setAddChildDialogOpen] = useState(false);
   const [payLater, setPayLater] = useState(false);
   const [packageActivities, setPackageActivities] = useState<Record<string, any[]>>({});
+  const [memberEnrolledPackages, setMemberEnrolledPackages] = useState<Record<string, string[]>>({});
 
   // Initialize with pre-selected members or auto-select based on hasChildren
   useEffect(() => {
-    if (existingUserMode && registrants.length === 0 && userProfile) {
-      // For existing users, auto-populate with profile data
+    if (existingUserMode && registrants.length === 0 && userProfile && initialPackageId) {
+      // When a specific package is clicked, show select-type to choose who to enroll
+      // Don't auto-select, let the user choose
+      setStep('select-type');
+    } else if (existingUserMode && registrants.length === 0 && userProfile && !initialPackageId) {
+      // No package pre-selected, show selection screen
       if (hasChildren === false) {
         // No children - auto-select "self" and pre-populate
         setRegistrationType('self');
         const selfRegistrant: Registrant = {
           id: Math.random().toString(36).substr(2, 9),
           type: 'self',
-          packageId: initialPackageId || '',
+          packageId: '',
           name: userProfile.name,
           dateOfBirth: userProfile.date_of_birth,
           gender: userProfile.gender,
@@ -158,9 +163,8 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
           address: userProfile.address
         };
         setRegistrants([selfRegistrant]);
-        setStep('select-type'); // Still show selection so they can pick packages
+        setStep('select-type');
       }
-      // If they have children, show the selection screen
     } else if (preSelectedMembers && preSelectedMembers.length > 0 && registrants.length === 0) {
       const hasSelf = preSelectedMembers.some(m => m.type === 'self');
       const hasKids = preSelectedMembers.some(m => m.type === 'child');
@@ -199,6 +203,70 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
       setStep('details');
     }
   }, [preSelectedMembers, hasChildren, existingUserMode, userProfile, existingChildren]);
+
+  // Fetch existing enrollments for each member
+  useEffect(() => {
+    const fetchMemberEnrollments = async () => {
+      if (!existingUserMode || registrants.length === 0) return;
+
+      const enrollmentsMap: Record<string, string[]> = {};
+
+      for (const reg of registrants) {
+        try {
+          // Find the club member record for this registrant
+          let memberId = null;
+
+          if (reg.type === 'self') {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              const { data: member } = await supabase
+                .from('club_members')
+                .select('id')
+                .eq('club_id', clubId)
+                .eq('user_id', user.id)
+                .maybeSingle();
+              memberId = member?.id;
+            }
+          } else {
+            // For children, find by matching name and DOB
+            if (existingChildren) {
+              const child = existingChildren.find(c =>
+                c.name === reg.name && c.date_of_birth === reg.dateOfBirth
+              );
+              if (child) {
+                const { data: member } = await supabase
+                  .from('club_members')
+                  .select('id')
+                  .eq('club_id', clubId)
+                  .eq('child_id', child.id)
+                  .maybeSingle();
+                memberId = member?.id;
+              }
+            }
+          }
+
+          if (memberId) {
+            // Fetch active enrollments for this member
+            const { data: enrollments } = await supabase
+              .from('package_enrollments')
+              .select('package_id')
+              .eq('member_id', memberId)
+              .eq('is_active', true);
+
+            if (enrollments) {
+              enrollmentsMap[reg.id] = enrollments.map(e => e.package_id);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching enrollments for', reg.name, error);
+        }
+      }
+
+      setMemberEnrolledPackages(enrollmentsMap);
+    };
+
+    fetchMemberEnrollments();
+  }, [registrants, existingUserMode, clubId, existingChildren]);
 
   // Fetch package activities with schedule and instructor info
   useEffect(() => {
@@ -533,8 +601,23 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
 
     if (existingUserMode) {
       // Flow for existing users: select-type -> package-selection -> payment-review
+      // When package is pre-selected: select-type -> payment-review
       if (step === 'select-type') {
-        setStep('package-selection');
+        if (initialPackageId) {
+          // Package pre-selected, skip package selection and go directly to payment review
+          // Before moving to payment review, check who is a first-timer
+          const firstTimerIds: string[] = [];
+          for (const reg of registrants) {
+            const isFirstTimer = await checkFirstTimeEnrollment(reg);
+            if (isFirstTimer) {
+              firstTimerIds.push(reg.id);
+            }
+          }
+          setFirstTimers(firstTimerIds);
+          setStep('payment-review');
+        } else {
+          setStep('package-selection');
+        }
       } else if (step === 'package-selection') {
         // Before moving to payment review, check who is a first-timer
         const firstTimerIds: string[] = [];
@@ -627,7 +710,12 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
     };
     setRegistrants([...registrants, newRegistrant]);
     setAddChildDialogOpen(false);
-    
+
+    // If this is from the "no kids" screen and a package is selected, proceed to package selection
+    if (existingUserMode && initialPackageId && registrants.length === 0) {
+      setStep('package-selection');
+    }
+
     toast({
       title: "Child added",
       description: `${childData.name} has been added to the registration`
@@ -1042,14 +1130,331 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
     }
   };
 
-  const renderSelectType = () => (
-    <div className="space-y-6">
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold mb-2">Who are you registering?</h2>
-        <p className="text-muted-foreground">Choose your registration type</p>
-      </div>
+  const renderSelectType = () => {
+    // Special case: When a specific package is clicked from club details
+    if (existingUserMode && initialPackageId && userProfile) {
+      const selectedPkg = packages.find(p => p.id === initialPackageId);
 
-      <div className="grid md:grid-cols-3 gap-4">
+      if (selectedPkg) {
+        // Check who is eligible for this package
+        const userAge = userProfile.date_of_birth ? calculateAge(userProfile.date_of_birth) : null;
+        const isUserEligible = (() => {
+          if (userAge !== null) {
+            if (selectedPkg.age_min && userAge < selectedPkg.age_min) return false;
+            if (selectedPkg.age_max && userAge > selectedPkg.age_max) return false;
+          }
+          if (selectedPkg.gender_restriction && selectedPkg.gender_restriction !== 'mixed' && userProfile.gender) {
+            if (selectedPkg.gender_restriction !== userProfile.gender) return false;
+          }
+          return true;
+        })();
+
+        const eligibleChildren = existingChildren?.filter(child => {
+          const age = child.date_of_birth ? calculateAge(child.date_of_birth) : null;
+          if (age !== null) {
+            if (selectedPkg.age_min && age < selectedPkg.age_min) return false;
+            if (selectedPkg.age_max && age > selectedPkg.age_max) return false;
+          }
+          if (selectedPkg.gender_restriction && selectedPkg.gender_restriction !== 'mixed' && child.gender) {
+            if (selectedPkg.gender_restriction !== child.gender) return false;
+          }
+          return true;
+        }) || [];
+
+        const hasEligiblePeople = isUserEligible || eligibleChildren.length > 0;
+
+        if (!hasEligiblePeople) {
+          // Nobody is eligible
+          return (
+            <div className="space-y-6">
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-bold mb-2">Not Eligible</h2>
+                <p className="text-muted-foreground">Nobody in your family meets the requirements for this package</p>
+              </div>
+
+              <Card className="max-w-md mx-auto">
+                <CardContent className="p-8 text-center space-y-4">
+                  <AlertCircle className="h-16 w-16 mx-auto text-muted-foreground opacity-50" />
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2">{selectedPkg.name}</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      {selectedPkg.age_min && selectedPkg.age_max
+                        ? `Ages ${selectedPkg.age_min}-${selectedPkg.age_max}`
+                        : selectedPkg.age_max
+                          ? `Under ${selectedPkg.age_max} years`
+                          : selectedPkg.age_min
+                            ? `${selectedPkg.age_min}+ years`
+                            : 'No age restriction'
+                      }
+                      {selectedPkg.gender_restriction && selectedPkg.gender_restriction !== 'mixed' &&
+                        ` • ${selectedPkg.gender_restriction === 'male' ? 'Boys/Men only' : 'Girls/Women only'}`
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      This package has specific requirements that don't match your profile or your children's profiles.
+                    </p>
+                  </div>
+                  <Button variant="outline" onClick={onCancel} className="w-full">
+                    Back to Packages
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          );
+        }
+
+        // Show eligible people selection
+        return (
+          <div className="space-y-8">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
+                <Users className="w-8 h-8 text-primary" />
+              </div>
+              <h2 className="text-3xl font-bold mb-3">Who do you want to enroll?</h2>
+              <p className="text-lg text-muted-foreground mb-2">Select eligible person(s) for</p>
+              <Badge className="text-sm px-4 py-1.5">{selectedPkg.name}</Badge>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+              {/* Show user if eligible */}
+              {isUserEligible && (
+                <Card
+                  className={cn(
+                    "cursor-pointer transition-all hover:shadow-xl hover:scale-105 border-2",
+                    registrationType === 'self'
+                      ? "ring-4 ring-primary border-primary shadow-lg scale-105"
+                      : "border-border hover:border-primary/50"
+                  )}
+                  onClick={() => {
+                    setRegistrationType('self');
+                    const selfRegistrant: Registrant = {
+                      id: Math.random().toString(36).substring(2, 9),
+                      type: 'self',
+                      packageId: initialPackageId,
+                      name: userProfile.name,
+                      dateOfBirth: userProfile.date_of_birth,
+                      gender: userProfile.gender,
+                      nationality: userProfile.nationality,
+                      bloodType: userProfile.blood_type || '',
+                      avatarUrl: userProfile.avatar_url,
+                      email: userProfile.email,
+                      phone: userProfile.phone,
+                      countryCode: userProfile.country_code,
+                      address: userProfile.address
+                    };
+                    setRegistrants([selfRegistrant]);
+                  }}
+                >
+                  <CardContent className="p-8 text-center relative">
+                    {registrationType === 'self' && (
+                      <div className="absolute top-3 right-3">
+                        <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+                          <span className="text-white text-xs">✓</span>
+                        </div>
+                      </div>
+                    )}
+                    {userProfile.avatar_url ? (
+                      <img src={userProfile.avatar_url} alt="You" className="w-32 h-32 rounded-full mx-auto mb-4 object-cover border-4 border-primary/20" />
+                    ) : (
+                      <div className="w-32 h-32 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mx-auto mb-4 border-4 border-primary/20">
+                        <User className="h-16 w-16 text-primary" />
+                      </div>
+                    )}
+                    <Badge variant="secondary" className="mb-3">Adult</Badge>
+                    <h3 className="text-xl font-bold mb-2">Myself</h3>
+                    <p className="text-base text-muted-foreground mb-1">{userProfile.name}</p>
+                    {userAge && (
+                      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                        <Calendar className="h-4 w-4" />
+                        <span>{userAge} years old</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Show eligible children */}
+              {eligibleChildren.map((child) => {
+                const childAge = child.date_of_birth ? calculateAge(child.date_of_birth) : null;
+                const isSelected = registrants.some(r => r.name === child.name && r.dateOfBirth === child.date_of_birth);
+
+                return (
+                  <Card
+                    key={child.id}
+                    className={cn(
+                      "cursor-pointer transition-all hover:shadow-xl hover:scale-105 border-2",
+                      isSelected
+                        ? "ring-4 ring-primary border-primary shadow-lg scale-105"
+                        : "border-border hover:border-primary/50"
+                    )}
+                    onClick={() => {
+                      if (isSelected) {
+                        // Deselect
+                        setRegistrants(registrants.filter(r => !(r.name === child.name && r.dateOfBirth === child.date_of_birth)));
+                      } else {
+                        // Select
+                        setRegistrationType('kids-only');
+                        const childRegistrant: Registrant = {
+                          id: Math.random().toString(36).substring(2, 9),
+                          type: 'child',
+                          packageId: initialPackageId,
+                          name: child.name,
+                          dateOfBirth: child.date_of_birth,
+                          gender: child.gender,
+                          nationality: child.nationality,
+                          bloodType: child.blood_type || '',
+                          avatarUrl: child.avatar_url
+                        };
+                        setRegistrants([...registrants, childRegistrant]);
+                      }
+                    }}
+                  >
+                    <CardContent className="p-8 text-center relative">
+                      {isSelected && (
+                        <div className="absolute top-3 right-3">
+                          <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+                            <span className="text-white text-xs">✓</span>
+                          </div>
+                        </div>
+                      )}
+                      {child.avatar_url ? (
+                        <img src={child.avatar_url} alt={child.name} className="w-32 h-32 rounded-full mx-auto mb-4 object-cover border-4 border-primary/20" />
+                      ) : (
+                        <div className="w-32 h-32 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mx-auto mb-4 border-4 border-primary/20">
+                          <Users className="h-16 w-16 text-primary" />
+                        </div>
+                      )}
+                      <Badge variant="secondary" className="mb-3">Child</Badge>
+                      <h3 className="text-xl font-bold mb-2">{child.name}</h3>
+                      {childAge && (
+                        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-1">
+                          <Calendar className="h-4 w-4" />
+                          <span>{childAge} years old</span>
+                        </div>
+                      )}
+                      <p className="text-sm text-muted-foreground capitalize flex items-center justify-center gap-1">
+                        <span>{child.gender === 'male' ? '👦' : '👧'}</span>
+                        {child.gender}
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {/* Continue Button */}
+            {registrants.length > 0 && (
+              <div className="flex justify-center gap-3 mt-6">
+                <Button variant="outline" onClick={onCancel}>
+                  Cancel
+                </Button>
+                <Button onClick={() => {
+                  // Skip package selection since package is already pre-selected
+                  // Go directly to payment review
+                  setStep('payment-review');
+                }}>
+                  Continue with {registrants.length} {registrants.length === 1 ? 'person' : 'people'}
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+      }
+    }
+
+    // Special case: child package selected but user has no eligible children
+    if (existingUserMode && registrationType === 'kids-only' && initialPackageId) {
+      const selectedPkg = packages.find(p => p.id === initialPackageId);
+
+      // Check if user has no children at all
+      const hasNoChildren = !hasChildren || existingChildren?.length === 0;
+
+      // Check if user has children but none are eligible
+      let eligibleChildren: any[] = [];
+      if (!hasNoChildren && selectedPkg) {
+        eligibleChildren = existingChildren.filter(child => {
+          const age = child.date_of_birth ? calculateAge(child.date_of_birth) : null;
+          if (age !== null) {
+            if (selectedPkg.age_min && age < selectedPkg.age_min) return false;
+            if (selectedPkg.age_max && age > selectedPkg.age_max) return false;
+          }
+          if (selectedPkg.gender_restriction && selectedPkg.gender_restriction !== 'mixed' && child.gender) {
+            if (selectedPkg.gender_restriction !== child.gender) return false;
+          }
+          return true;
+        });
+      }
+
+      const hasNoEligibleChildren = !hasNoChildren && eligibleChildren.length === 0;
+
+      if (hasNoChildren || hasNoEligibleChildren) {
+        return (
+          <div className="space-y-6">
+            <div className="text-center mb-6">
+              <h2 className="text-2xl font-bold mb-2">
+                {hasNoChildren ? 'No Children Found' : 'No Eligible Children'}
+              </h2>
+              <p className="text-muted-foreground">
+                {hasNoChildren
+                  ? 'You need to add a child to register for this package'
+                  : 'None of your children match this package requirements'
+                }
+              </p>
+            </div>
+
+            <Card className="max-w-md mx-auto">
+              <CardContent className="p-8 text-center space-y-4">
+                <Users className="h-16 w-16 mx-auto text-muted-foreground opacity-50" />
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">
+                    {hasNoChildren
+                      ? "You don't have any kids registered"
+                      : `This package requires ${selectedPkg?.age_min && selectedPkg?.age_max
+                          ? `children aged ${selectedPkg.age_min}-${selectedPkg.age_max}`
+                          : selectedPkg?.age_max
+                            ? `children under ${selectedPkg.age_max} years`
+                            : 'specific age requirements'
+                        }`
+                    }
+                  </h3>
+                  <p className="text-sm text-muted-foreground mb-6">
+                    {hasNoChildren
+                      ? 'This package is for children only. Please add a child to your account to continue with registration.'
+                      : `Your children don't meet the age${selectedPkg?.gender_restriction && selectedPkg.gender_restriction !== 'mixed' ? '/gender' : ''} requirements for this package.`
+                    }
+                  </p>
+                </div>
+                {hasNoChildren && (
+                  <Button
+                    onClick={() => setAddChildDialogOpen(true)}
+                    className="w-full"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add a Child
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={onCancel}
+                  className="w-full"
+                >
+                  Back to Packages
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="text-center mb-6">
+          <h2 className="text-2xl font-bold mb-2">Who are you registering?</h2>
+          <p className="text-muted-foreground">Choose your registration type</p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-4">
         <Card 
           className={cn(
             "cursor-pointer transition-all hover:shadow-lg",
@@ -1183,8 +1588,9 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
           </CardContent>
         </Card>
       )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   const renderDetails = () => (
     <div className="space-y-6">
@@ -1441,7 +1847,17 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
         })
         .map((reg) => {
         const age = reg.dateOfBirth ? calculateAge(reg.dateOfBirth) : null;
+        const enrolledPackageIds = memberEnrolledPackages[reg.id] || [];
+
         const eligiblePackages = packages.filter(pkg => {
+          // If a specific package was clicked, ONLY show that package
+          if (initialPackageId && initialPackageId === reg.packageId) {
+            return pkg.id === initialPackageId;
+          }
+
+          // Filter out packages member is already enrolled in
+          if (enrolledPackageIds.includes(pkg.id)) return false;
+
           // Filter by age
           if (age !== null) {
             if (pkg.age_min && age < pkg.age_min) return false;
@@ -1476,10 +1892,18 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
             </CardHeader>
             <CardContent>
               {eligiblePackages.length === 0 ? (
-                <Alert variant="destructive">
+                <Alert variant={enrolledPackageIds.length > 0 ? "default" : "destructive"}>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    No eligible packages found for {reg.name}. Please contact the club administrator.
+                    {enrolledPackageIds.length > 0 ? (
+                      <span>
+                        <strong>{reg.name}</strong> is already enrolled in all available packages for this club.
+                      </span>
+                    ) : (
+                      <span>
+                        No eligible packages found for <strong>{reg.name}</strong>. Please contact the club administrator.
+                      </span>
+                    )}
                   </AlertDescription>
                 </Alert>
               ) : (
@@ -1936,6 +2360,12 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
     </div>
   );
 
+  // Determine which step should be highlighted
+  const isStep2Highlighted =
+    (existingUserMode && initialPackageId && step === 'payment-review') ||
+    (existingUserMode && !initialPackageId && step === 'package-selection') ||
+    (!existingUserMode && step === 'details');
+
   return (
     <div className="w-full p-6">
       {/* Progress Steps */}
@@ -1950,17 +2380,22 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
           <div className="w-16 h-1 bg-muted" />
           <div className={cn(
             "w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold",
-            (existingUserMode ? step === 'package-selection' : step === 'details') ? "bg-primary text-primary-foreground" : "bg-muted"
+            isStep2Highlighted ? "bg-primary text-primary-foreground" : "bg-muted"
           )}>
             2
           </div>
-          <div className="w-16 h-1 bg-muted" />
-          <div className={cn(
-            "w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold",
-            (existingUserMode ? step === 'payment-review' : step === 'review') ? "bg-primary text-primary-foreground" : "bg-muted"
-          )}>
-            3
-          </div>
+          {/* Only show step 3 if package is NOT pre-selected */}
+          {!(existingUserMode && initialPackageId) && (
+            <>
+              <div className="w-16 h-1 bg-muted" />
+              <div className={cn(
+                "w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold",
+                (existingUserMode ? step === 'payment-review' : step === 'review') ? "bg-primary text-primary-foreground" : "bg-muted"
+              )}>
+                3
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -1979,7 +2414,15 @@ export const MembershipRegistrationFlow: React.FC<Props> = ({
             if (step === 'select-type') onCancel?.();
             else if (existingUserMode) {
               if (step === 'package-selection') setStep('select-type');
-              else if (step === 'payment-review') setStep('package-selection');
+              else if (step === 'payment-review') {
+                // If package was pre-selected, go back to select-type (who's eligible)
+                // Otherwise, go back to package-selection
+                if (initialPackageId) {
+                  setStep('select-type');
+                } else {
+                  setStep('package-selection');
+                }
+              }
             } else {
               if (step === 'details') setStep('select-type');
               else if (step === 'review') setStep('details');
