@@ -184,6 +184,7 @@ export function AdminMembers({ clubId }: AdminMembersProps) {
 
   const fetchMembers = async () => {
     setLoading(true);
+    // OPTIMIZED: Use Supabase relationships to fetch everything in ONE query instead of N+1
     const { data, error } = await supabase
       .from("club_members")
       .select(`
@@ -192,6 +193,30 @@ export function AdminMembers({ clubId }: AdminMembersProps) {
           id,
           is_active,
           package_id
+        ),
+        profiles:user_id(
+          name,
+          avatar_url,
+          phone,
+          country_code,
+          email,
+          date_of_birth,
+          gender,
+          nationality
+        ),
+        children:child_id(
+          name,
+          avatar_url,
+          date_of_birth,
+          gender,
+          nationality,
+          parent_user_id,
+          profiles:parent_user_id(
+            name,
+            phone,
+            country_code,
+            email
+          )
         )
       `)
       .eq("club_id", clubId)
@@ -203,69 +228,61 @@ export function AdminMembers({ clubId }: AdminMembersProps) {
       return;
     }
 
-    // Fetch profile/child data separately for each member
-    const membersWithProfiles = await Promise.all(
-      (data || []).map(async (member) => {
-        // For adult members (user_id is set)
-        if (member.user_id && !member.child_id) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("name, avatar_url, phone, country_code, email, date_of_birth, gender, nationality")
-            .eq("user_id", member.user_id)
-            .maybeSingle();
-          
-          return {
-            ...member,
-            profiles: profile,
-          };
-        }
-        
-        // For child members (child_id is set)
-        if (member.child_id && !member.user_id) {
-          const { data: child } = await supabase
-            .from("children")
-            .select("name, avatar_url, date_of_birth, gender, nationality, parent_user_id")
-            .eq("id", member.child_id)
-            .maybeSingle();
-          
-          if (!child) return { ...member, profiles: null };
-          
-          // Fetch parent's profile for contact info
-          const { data: parentProfile } = await supabase
-            .from("profiles")
-            .select("name, phone, country_code, email")
-            .eq("user_id", child.parent_user_id)
-            .maybeSingle();
-          
-          // Transform child data to match profiles structure
-          return {
-            ...member,
-            profiles: {
-              name: child.name,
-              parentName: parentProfile?.name,
-              avatar_url: child.avatar_url,
-              date_of_birth: child.date_of_birth,
-              gender: child.gender,
-              nationality: child.nationality,
-              phone: parentProfile?.phone,
-              country_code: parentProfile?.country_code,
-              email: parentProfile?.email,
-            },
-          };
-        }
-        
-        return { ...member, profiles: null };
-      })
-    );
+    // OPTIMIZED: Data is already fetched with relationships, just transform it
+    const membersWithProfiles = (data || []).map((member: any) => {
+      // For adult members (user_id is set)
+      if (member.user_id && !member.child_id) {
+        return {
+          ...member,
+          profiles: member.profiles || null,
+        };
+      }
+
+      // For child members (child_id is set)
+      if (member.child_id && !member.user_id) {
+        const child = member.children;
+        if (!child) return { ...member, profiles: null };
+
+        const parentProfile = child.profiles;
+
+        // Transform child data to match profiles structure
+        return {
+          ...member,
+          profiles: {
+            name: child.name,
+            parentName: parentProfile?.name,
+            avatar_url: child.avatar_url,
+            date_of_birth: child.date_of_birth,
+            gender: child.gender,
+            nationality: child.nationality,
+            phone: parentProfile?.phone,
+            country_code: parentProfile?.country_code,
+            email: parentProfile?.email,
+          },
+          children: child,
+          parentProfile: parentProfile,
+        };
+      }
+
+      return { ...member, profiles: null };
+    });
 
     setMembers(membersWithProfiles);
     setLoading(false);
   };
 
   const fetchRequests = async () => {
+    // OPTIMIZED: Use Supabase relationships to fetch profiles in ONE query
     const { data, error } = await supabase
       .from("membership_requests")
-      .select("*")
+      .select(`
+        *,
+        profiles:user_id(
+          name,
+          avatar_url,
+          phone
+        )
+      `)
       .eq("club_id", clubId)
       .eq("status", "pending")
       .order("requested_at", { ascending: false });
@@ -275,23 +292,8 @@ export function AdminMembers({ clubId }: AdminMembersProps) {
       return;
     }
 
-    // Fetch profile data separately for each request
-    const requestsWithProfiles = await Promise.all(
-      (data || []).map(async (request) => {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("name, avatar_url, phone")
-          .eq("user_id", request.user_id)
-          .single();
-        
-        return {
-          ...request,
-          profiles: profile,
-        };
-      })
-    );
-
-    setRequests(requestsWithProfiles);
+    // Data already includes profiles from the join
+    setRequests(data || []);
   };
 
   const handleApproveRequest = async (requestId: string, userId: string) => {
