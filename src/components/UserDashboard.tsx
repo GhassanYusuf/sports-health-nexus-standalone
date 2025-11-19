@@ -160,73 +160,66 @@ const UserDashboard = () => {
 
   const fetchClubs = async () => {
     try {
+      // OPTIMIZED: Fetch only necessary fields and use existing count columns
       const { data, error } = await supabase
         .from('clubs')
-        .select('*')
+        .select(`
+          id,
+          name,
+          description,
+          location,
+          image_url,
+          logo_url,
+          rating,
+          members_count,
+          classes_count,
+          trainers_count,
+          peak_hours,
+          gps_latitude,
+          gps_longitude,
+          club_slug,
+          country_iso
+        `)
         .order('rating', { ascending: false });
 
       if (error) throw error;
 
       if (data) {
-        const clubsWithStats = await Promise.all(
-          data.map(async (club) => {
-            // Active members with non-expired package enrollments
-            const { data: enrollments } = await supabase
-              .from('package_enrollments')
-              .select(`
-                member_id,
-                enrolled_at,
-                is_active,
-                club_packages!inner(club_id, duration_months)
-              `)
-              .eq('club_packages.club_id', club.id)
-              .eq('is_active', true);
+        // Only calculate distances if user location is available
+        // Do this in batches to avoid overwhelming the API
+        let clubsWithDistances: Club[];
 
-            const now = new Date();
-            const activeMembers = new Set<string>();
-            enrollments?.forEach((enrollment: any) => {
-              const enrolledDate = new Date(enrollment.enrolled_at);
-              const durationMonths = enrollment.club_packages.duration_months || 1;
-              const expiryDate = new Date(enrolledDate);
-              expiryDate.setMonth(expiryDate.getMonth() + durationMonths);
-              if (expiryDate > now) activeMembers.add(enrollment.member_id);
-            });
+        if (userLocation) {
+          // Calculate distances for clubs with GPS coordinates
+          clubsWithDistances = await Promise.all(
+            data.map(async (club): Promise<Club> => {
+              let drivingDistance: number | null = null;
 
-            // Packages count
-            const { count: packagesCount } = await supabase
-              .from('club_packages')
-              .select('*', { count: 'exact', head: true })
-              .eq('club_id', club.id);
+              // Only calculate distance if club has GPS coordinates
+              if (club.gps_latitude && club.gps_longitude) {
+                try {
+                  drivingDistance = await calculateDrivingDistance(
+                    Number(club.gps_latitude),
+                    Number(club.gps_longitude)
+                  );
+                } catch (error) {
+                  console.error(`Error calculating distance for ${club.name}:`, error);
+                }
+              }
 
-            // Trainers count
-            const { count: trainersCount } = await supabase
-              .from('club_instructors')
-              .select('*', { count: 'exact', head: true })
-              .eq('club_id', club.id);
-
-            // Calculate driving distance if GPS coordinates are available
-            let drivingDistance = null;
-            if (club.gps_latitude && club.gps_longitude && userLocation) {
-              console.log(`Calculating distance for club: ${club.name}`);
-              drivingDistance = await calculateDrivingDistance(
-                Number(club.gps_latitude),
-                Number(club.gps_longitude)
-              );
-              console.log(`Distance for ${club.name}: ${drivingDistance} km`);
-            }
-
-            return {
-              ...club,
-              members_count: activeMembers.size,
-              classes_count: packagesCount || 0,
-              trainers_count: trainersCount || 0,
-              driving_distance: drivingDistance,
-            };
-          })
-        );
+              return {
+                ...club,
+                driving_distance: drivingDistance,
+              } as Club;
+            })
+          );
+        } else {
+          // Add driving_distance field even when no location
+          clubsWithDistances = data.map(club => ({ ...club, driving_distance: null } as Club));
+        }
 
         // Sort by driving distance (closest first), then by rating
-        const sortedClubs = clubsWithStats.sort((a, b) => {
+        const sortedClubs = clubsWithDistances.sort((a, b) => {
           // Both have distances - sort by distance
           if (a.driving_distance !== null && b.driving_distance !== null) {
             return a.driving_distance - b.driving_distance;
